@@ -4,6 +4,18 @@ import sys
 import time
 
 import agent
+import qloo
+
+ALIASES = {"bangalore": "bengaluru"}
+
+
+def real_competitors(brief, location):
+    """How many of a brief's named competitors Qloo can find in that city."""
+    city = location.split(",")[-1].strip().lower()
+    cities = {city, ALIASES.get(city, city)}
+    names = [c.get("name", "") for c in brief.get("competitors", [])]
+    found = sum(any(any(c in (r.get("where") or "").lower() for c in cities) for r in agent.lookup(n)) for n in names if n)
+    return f"{found}/{len(names)}"
 
 CASES = [
     ("A specialty coffee shop and vinyl listening room", "Williamsburg, Brooklyn"),
@@ -37,6 +49,11 @@ if __name__ == "__main__":
         out = agent.run(concept, location)
         r = rate(out)
         r["seconds"] = round(time.time() - t)
+        plain = agent.generic(concept, location)
+        r["plain_llm"] = {"competitors_found_in_qloo": real_competitors(plain, location),
+                          "names_cited": len(agent.cited(plain))}
+        r["competitors_found_in_qloo"] = real_competitors(out["brief"], location)
+        out["plain"] = plain
         results.append((concept, location, out, r))
         print(f"\n## {concept} @ {location}\n{json.dumps(r, ensure_ascii=False)}", flush=True)
     same = [set(c.lower() for c in agent.cited(o["brief"])) for c_, _, o, _ in results[:3]]

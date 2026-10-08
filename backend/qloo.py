@@ -4,7 +4,10 @@ Every function here maps to a query shape that was verified to return data
 with a hackathon key. Neighbourhood-level `signal.location` is sparse, so
 neighbourhood taste is derived from the area's venues used as signals.
 """
+import hashlib
+import json
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -23,10 +26,27 @@ _session = requests.Session()
 _session.headers["X-Api-Key"] = os.environ.get("QLOO_API_KEY", "")
 
 
+CACHE = Path(__file__).resolve().parent / ".cache" / "qloo"
+
+
 def _get(path, **params):
-    r = _session.get(BASE + path, params=params, timeout=40)
+    """GET with an on-disk cache; set QLOO_CACHE=0 to always hit the API."""
+    use_cache = os.environ.get("QLOO_CACHE", "1") != "0"
+    key = hashlib.sha1(json.dumps([path, sorted(params.items())], default=str).encode()).hexdigest()
+    hit = CACHE / f"{key}.json"
+    if use_cache and hit.exists():
+        return json.loads(hit.read_text())
+    for attempt in range(6):
+        r = _session.get(BASE + path, params=params, timeout=40)
+        if r.status_code != 429:
+            break
+        time.sleep(float(r.headers.get("retry-after", 1 + attempt)))
     r.raise_for_status()
-    return r.json()
+    data = r.json()
+    if use_cache:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        hit.write_text(json.dumps(data))
+    return data
 
 
 def _insights(**params):
@@ -101,9 +121,12 @@ def demographics(entity_ids):
     return {d["entity_id"]: d["query"] for d in res.get("demographics", [])}
 
 
-def tags_from(entity_ids, take=20):
-    """Descriptive tags the audience behind a set of entities leans towards."""
-    res = _insights(**{"filter.type": "urn:tag", "signal.interests.entities": ",".join(entity_ids), "take": take})
+def tags_from(entity_ids, take=20, tag_type=None):
+    """Descriptive tags the audience behind a set of entities leans towards, optionally of one tag type."""
+    params = {"filter.type": "urn:tag", "signal.interests.entities": ",".join(entity_ids), "take": take}
+    if tag_type:
+        params["filter.tag.types"] = tag_type
+    res = _insights(**params)
     return [
         {"id": t.get("tag_id") or t.get("id"), "name": t["name"], "type": t.get("subtype") or t.get("type"),
          "affinity": t.get("query", {}).get("affinity")}
