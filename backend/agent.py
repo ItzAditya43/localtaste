@@ -16,6 +16,7 @@ DETAIL_TAGS = ("ambience", "decor", "menu_highlight", "specialty_dish", "good_fo
 MAX_STEPS = 6
 MIN_CALLS, MAX_CALLS = 6, 10
 MIN_RECS = 5
+MIN_SIGNALS = {"events": 2}
 
 
 def _names(items, n=6):
@@ -30,8 +31,15 @@ def find_tags(query):
 TAG_GROUPS = {"music_genres": "urn:tag:genre:music", "food_scene": "urn:tag:genre:place", "ambience": "urn:tag:ambience:qloo"}
 
 
+class UnknownPlace(ValueError):
+    """Raised when Qloo cannot place the location or has no venues there."""
+
+
 def area_taste(location):
-    venues = qloo.places(location, take=8)
+    resolved = qloo.resolve_location(location)
+    venues = qloo.places(location, take=8) if resolved else []
+    if not venues:
+        raise UnknownPlace(f"Qloo has no venue data for \u201c{location}\u201d. Try the form \u201cNeighbourhood, City\u201d, for example \u201cShoreditch, London\u201d.")
     ids = [v["id"] for v in venues]
     city = location.split(",")[-1].strip()
     jobs = {d: (qloo.taste_from, ids, d, 6) for d in DOMAINS}
@@ -40,6 +48,7 @@ def area_taste(location):
     with ThreadPoolExecutor(3) as pool:
         got = {k: f.result() for k, f in {k: pool.submit(*j) for k, j in jobs.items()}.items()}
     return {
+        "resolved_as": resolved,
         "popular_venues": _names(venues, 8),
         "local_venue_artists": _names(got["artist"]),
         "city_artists": _names(got["city_artists"]),
@@ -63,7 +72,8 @@ def competitors(location, tag_ids):
             seen.add(e["entity_id"])
             p = e.get("properties", {})
             detail = [t["name"] for t in e.get("tags", []) if t.get("name") and any(f":{d}:" in t.get("id", "") for d in DETAIL_TAGS)]
-            out.append({"id": e["entity_id"], "name": e["name"], "popularity": round(e.get("popularity") or 0, 2),
+            out.append({"id": e["entity_id"], "name": e["name"], "category": tag.split(":")[-1].replace("_", " "),
+                        "popularity": round(e.get("popularity") or 0, 2),
                         "rating": p.get("business_rating"), "price_level": p.get("price_level"), "known_for": detail[:6]})
     return sorted(out, key=lambda v: -v["popularity"])[:12]
 
@@ -108,9 +118,11 @@ IMPL = {f.__name__: f for f in (area_taste, find_tags, competitors, lookup, audi
 
 RESEARCH = (
     "You research a neighbourhood for someone opening a business there, using Qloo taste data through tools. "
-    "Call several tools per turn where they are independent. Always cover: the area's taste, the direct competitors "
+    "Call several tools per turn where they are independent. The area's taste is given to you. Always cover: the direct competitors "
     "(find_tags then competitors; if fewer than 4 come back, retry once with a broader category tag), and what the competitors' audience loves in at least two other domains "
-    "(audience_taste with competitor ids). Use lookup and venues_for_taste for any inspirations the owner names. "
+    "(audience_taste with the ids of the 3-5 closest competitors). If the owner names places, brands or artists they admire, "
+    "lookup each one, then use venues_for_taste to see where their fans already go locally and audience_taste to see what "
+    "else those fans love. "
     "Stop calling tools once you have enough; then reply with the single word DONE."
 )
 BRIEF_SCHEMA = (
@@ -151,11 +163,9 @@ def _lite(tool, result):
     return result
 
 
-def research(concept, location, on_step=None):
-    """Let the model query Qloo until it has enough. Returns the ledger of tool calls and results."""
-    messages = [{"role": "system", "content": RESEARCH},
-                {"role": "user", "content": f"Concept: {concept}\nLocation: {location}"}]
-    ledger, handles = [], {}
+def research(concept, location, inspirations="", on_step=None):
+    """Read the area, then let the model query Qloo until it has enough. Returns the ledger of tool calls and results."""
+    ledger, handles, names = [], {}, {}
 
     def shorten(x):
         """Swap Qloo ids for short handles so the model does not have to copy UUIDs."""
@@ -163,15 +173,31 @@ def research(concept, location, on_step=None):
             return [shorten(v) for v in x]
         if isinstance(x, dict) and "id" in x and "name" in x and not str(x["id"]).startswith("urn:"):
             handle = next((h for h, i in handles.items() if i == x["id"]), f"e{len(handles) + 1}")
-            handles[handle] = x["id"]
+            handles[handle], names[handle] = x["id"], x["name"]
             return {**x, "id": handle}
         return x
+
+    def record(tool, args, result):
+        step = {"tool": tool, "args": args, "result": result}
+        if isinstance(args, dict) and "entity_ids" in args:
+            step["about"] = [names[i] for i in args["entity_ids"] if i in names]
+        ledger.append(step)
+        if on_step:
+            on_step(step)
+
+    area = area_taste(location)  # always first; fails fast on a place Qloo cannot read
+    record("area_taste", {"location": location}, area)
+    ask = f"Concept: {concept}\nLocation: {location}"
+    if inspirations:
+        ask += f"\nThe owner admires: {inspirations}"
+    messages = [{"role": "system", "content": RESEARCH},
+                {"role": "user", "content": f"{ask}\n\narea_taste is already done:\n{json.dumps(area, ensure_ascii=False)}"}]
 
     def missing():
         ok = [s for s in ledger if not (isinstance(s["result"], dict) and "error" in s["result"])]
         todo = []
-        if not any(s["tool"] == "area_taste" for s in ok):
-            todo.append("area_taste for the location")
+        if inspirations and not any(s["tool"] == "lookup" and s["result"] for s in ok):
+            todo.append(f"lookup for what the owner admires ({inspirations}), then audience_taste or venues_for_taste with those ids")
         if not any(s["tool"] == "competitors" and s["result"] for s in ok):
             todo.append("find_tags then competitors, with broader tags if needed")
         elif len({s["args"].get("domain") for s in ok if s["tool"] == "audience_taste"}) < 2:
@@ -198,9 +224,7 @@ def research(concept, location, on_step=None):
                 result = shorten(IMPL[name](**real))
             except Exception as ex:  # surfaced to the model so it can correct the call
                 args, result = c["function"]["arguments"], {"error": str(ex)[:200]}
-            ledger.append({"tool": name, "args": args, "result": result})
-            if on_step:
-                on_step(ledger[-1])
+            record(name, args, result)
             messages.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(_lite(name, result), ensure_ascii=False)})
         if len(ledger) >= MAX_CALLS or (len(ledger) >= MIN_CALLS and not missing()):
             break
@@ -230,28 +254,34 @@ def _evidence(ledger):
         scope = ", ".join(str(v) for k, v in s["args"].items() if k != "entity_ids" and k != "tag_ids")
         res = s["result"]
         if s["tool"] == "area_taste":
-            res = {_AREA_KEYS[k]: v for k, v in res.items()}
+            res = {_AREA_KEYS[k]: v for k, v in res.items() if k in _AREA_KEYS}
         elif s["tool"] in ("competitors", "venues_for_taste"):
             res = [{_VENUE_KEYS.get(k, k): x for k, x in v.items() if k != "id"} for v in res]
         lines.append(f"[{_LABELS[s['tool']]} - {scope}]\n{json.dumps(res, ensure_ascii=False)}")
     return "\n\n".join(lines)
 
 
-def run(concept, location, on_step=None):
+def run(concept, location, inspirations="", on_step=None):
     """Research with Qloo, then write the grounded brief. Returns {"brief": ..., "ledger": ...}.
 
     Signals the model cites that Qloo never returned are sent back once for correction, then removed.
     """
-    ledger = research(concept, location, on_step)
+    ledger = research(concept, location, inspirations, on_step)
     kinds = signal_kinds(ledger)
     known = set(kinds)
-    prompt = f"Concept: {concept}\nLocation: {location}\n\nEVIDENCE\n{_evidence(ledger)}"
+    admires = f"\nThe owner admires: {inspirations}" if inspirations else ""
+    prompt = f"Concept: {concept}\nLocation: {location}{admires}\n\nEVIDENCE\n{_evidence(ledger)}"
     brief = chat_json(BRIEF, prompt)
 
     def clean(b):
         for r in b.get("recommendations", []) + b.get("risks", []):
             r["signals"] = [c for c in dict.fromkeys(r.get("signals", [])) if c.lower() in known]
-        b["recommendations"] = [r for r in b.get("recommendations", []) if r["signals"] and not misfit(r, kinds)]
+        rivals = {c.get("name", "").lower() for c in b.get("competitors", [])}
+        for r in b.get("recommendations", []):
+            if r.get("area") == "partners":  # a venue cannot be both a rival and a partner
+                r["signals"] = [c for c in r["signals"] if c.lower() not in rivals]
+        b["competitors"] = [c for c in b.get("competitors", []) if kinds.get(c.get("name", "").lower()) == "venue"]
+        b["recommendations"] = [r for r in b.get("recommendations", []) if len(r["signals"]) >= MIN_SIGNALS.get(r.get("area"), 1) and not misfit(r, kinds)]
         return b
 
     bad = [c for c in cited(brief) if c.lower() not in known]
@@ -265,9 +295,10 @@ def run(concept, location, on_step=None):
     return {"brief": clean(brief), "ledger": ledger}
 
 
-def generic(concept, location):
+def generic(concept, location, inspirations=""):
     """The same brief from the model alone, as the no-Qloo comparison."""
-    return chat_json(GENERIC, f"Concept: {concept}\nLocation: {location}")
+    admires = f"\nThe owner admires: {inspirations}" if inspirations else ""
+    return chat_json(GENERIC, f"Concept: {concept}\nLocation: {location}{admires}")
 
 
 FITTING = {"music": {"artist", "genre"}, "partners": {"brand", "venue"}, "pricing": {"venue"},
@@ -300,7 +331,7 @@ def signal_kinds(ledger):
         elif tool in ("audience_taste", "city_taste"):
             add(res, s["args"]["domain"])
         elif tool == "lookup":
-            for e in res:
+            for e in res[:1]:  # only the top match counts as found
                 add([e], "venue" if e["type"] == "place" else e["type"])
     return kinds
 
@@ -318,15 +349,16 @@ def misfit(rec, kinds):
 def describe(step):
     """A one-line, human description of a research step, for showing the agent's work."""
     a = step["args"] if isinstance(step["args"], dict) else {}
-    n = len(a.get("entity_ids", []))
+    about = step.get("about") or []
+    who = ", ".join(about[:3]) + (f" and {len(about) - 3} more" if len(about) > 3 else "") or "those venues"
     domain = {"artist": "music", "brand": "brands", "movie": "films", "tv_show": "TV"}.get(a.get("domain"), "")
     return {
         "area_taste": f"Reading the taste of {a.get('location', 'the area')}",
         "find_tags": f"Looking up how Qloo labels \u201c{a.get('query', '')}\u201d",
         "competitors": f"Finding comparable venues in {a.get('location', 'the area')}",
         "lookup": f"Finding \u201c{a.get('name', '')}\u201d in Qloo",
-        "audience_taste": f"Asking what the audience of {n} venue{'s' if n != 1 else ''} also loves: {domain}",
-        "venues_for_taste": f"Finding where that audience already goes in {a.get('location', 'the area')}",
+        "audience_taste": f"Asking what fans of {who} also love: {domain}",
+        "venues_for_taste": f"Finding where fans of {who} already go in {a.get('location', 'the area')}",
         "city_taste": f"Reading {a.get('city', 'the city')}-wide taste: {domain}",
     }.get(step["tool"], step["tool"])
 
@@ -349,7 +381,7 @@ def venue_facts(ledger):
     for s in ledger:
         if s["tool"] in ("competitors", "venues_for_taste") and isinstance(s["result"], list):
             for v in s["result"]:
-                facts.setdefault(v["name"].lower(), {k: v.get(k) for k in ("popularity", "rating", "price_level", "known_for", "affinity")})
+                facts.setdefault(v["name"].lower(), {k: v.get(k) for k in ("category", "popularity", "rating", "price_level", "known_for", "affinity")})
     return facts
 
 
@@ -368,5 +400,5 @@ def cited(brief):
 
 if __name__ == "__main__":
     concept, location = sys.argv[1], sys.argv[2]
-    out = run(concept, location, on_step=lambda s: print(f"  > {s['tool']}({json.dumps(s['args'])})", file=sys.stderr))
+    out = run(concept, location, sys.argv[3] if len(sys.argv) > 3 else "", on_step=lambda s: print(f"  > {s['tool']}({json.dumps(s['args'])})", file=sys.stderr))
     print(json.dumps(out["brief"], indent=2, ensure_ascii=False))

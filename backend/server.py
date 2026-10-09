@@ -10,7 +10,9 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Query
+from collections import defaultdict, deque
+
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 import agent
@@ -20,22 +22,36 @@ RUNS = ROOT / "runs"
 FRONTEND = ROOT.parent / "frontend"
 app = FastAPI(title="LocalTaste")
 _live = threading.Semaphore(1)  # one live run at a time keeps us inside the LLM rate limit
+_recent = defaultdict(deque)  # visitor -> times of their live runs
+HOURLY_LIMIT = 8
 
 
-def _slug(concept, location):
-    norm = re.sub(r"\s+", " ", f"{concept}|{location}".lower()).strip()
+def _allowed(visitor):
+    seen, now = _recent[visitor], time.time()
+    while seen and now - seen[0] > 3600:
+        seen.popleft()
+    if len(seen) >= HOURLY_LIMIT:
+        return False
+    seen.append(now)
+    return True
+
+
+def _slug(concept, location, inspirations=""):
+    norm = re.sub(r"\s+", " ", f"{concept}|{location}|{inspirations}".lower()).strip().rstrip("|")
     return hashlib.sha1(norm.encode()).hexdigest()[:16]
 
 
 def _step_event(step):
+    res = step["result"]
     return {"title": agent.describe(step), "tool": step["tool"], "names": agent.preview(step),
-            "failed": isinstance(step["result"], dict) and "error" in step["result"]}
+            "failed": isinstance(res, dict) and "error" in res,
+            "resolved_as": res.get("resolved_as") if isinstance(res, dict) else None}
 
 
-def _package(concept, location, out, plain):
+def _package(concept, location, inspirations, out, plain):
     ledger = out["ledger"]
     return {
-        "concept": concept, "location": location, "brief": out["brief"], "plain": plain,
+        "concept": concept, "location": location, "inspirations": inspirations, "brief": out["brief"], "plain": plain,
         "steps": [_step_event(s) for s in ledger],
         "kinds": agent.signal_kinds(ledger), "venues": agent.venue_facts(ledger),
         "stats": {"qloo_calls": len(ledger), "signals": len(set(c.lower() for c in agent.cited(out["brief"])))},
@@ -54,27 +70,32 @@ def _replay(saved):
     yield _sse("result", saved)
 
 
-def _live_run(concept, location):
+def _live_run(concept, location, inspirations, visitor):
     events = queue.Queue()
 
     def work():
         try:
             plain = {}
-            side = threading.Thread(target=lambda: plain.update(agent.generic(concept, location)))
+            side = threading.Thread(target=lambda: plain.update(agent.generic(concept, location, inspirations)))
             side.start()
-            out = agent.run(concept, location, on_step=lambda s: events.put(("step", _step_event(s))))
+            out = agent.run(concept, location, inspirations, on_step=lambda s: events.put(("step", _step_event(s))))
             events.put(("writing", {}))
             side.join()
-            result = _package(concept, location, out, plain)
+            result = _package(concept, location, inspirations, out, plain)
             RUNS.mkdir(exist_ok=True)
-            (RUNS / f"{_slug(concept, location)}.json").write_text(json.dumps(result, ensure_ascii=False))
+            (RUNS / f"{_slug(concept, location, inspirations)}.json").write_text(json.dumps(result, ensure_ascii=False))
             events.put(("result", result))
-        except Exception as ex:
-            events.put(("error", {"message": str(ex)[:300]}))
+        except agent.UnknownPlace as ex:
+            events.put(("error", {"message": str(ex)}))
+        except Exception:
+            events.put(("error", {"message": "Something went wrong while writing this brief. Please try again in a minute."}))
         finally:
             _live.release()
             events.put(None)
 
+    if not _allowed(visitor):
+        yield _sse("error", {"message": f"You have reached the limit of {HOURLY_LIMIT} new briefs an hour. Saved examples still work."})
+        return
     if not _live.acquire(timeout=1):
         yield _sse("error", {"message": "Another brief is being written right now. Try again in a minute, or open a saved example."})
         return
@@ -85,16 +106,20 @@ def _live_run(concept, location):
 
 
 @app.get("/api/run")
-def run(concept: str = Query(min_length=5, max_length=300), location: str = Query(min_length=3, max_length=80), fresh: bool = False):
-    saved = RUNS / f"{_slug(concept, location)}.json"
-    stream = _replay(json.loads(saved.read_text())) if saved.exists() and not fresh else _live_run(concept.strip(), location.strip())
+def run(request: Request, concept: str = Query(min_length=5, max_length=300), location: str = Query(min_length=3, max_length=80),
+        inspirations: str = Query(default="", max_length=120), fresh: bool = False):
+    concept, location, inspirations = concept.strip(), location.strip(), inspirations.strip()
+    visitor = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "?")).split(",")[0].strip()
+    saved = RUNS / f"{_slug(concept, location, inspirations)}.json"
+    stream = (_replay(json.loads(saved.read_text())) if saved.exists() and not fresh
+              else _live_run(concept, location, inspirations, visitor))
     return StreamingResponse(stream, media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/examples")
 def examples():
     runs = [json.loads(p.read_text()) for p in sorted(RUNS.glob("*.json"))] if RUNS.exists() else []
-    return [{"concept": r["concept"], "location": r["location"]} for r in runs]
+    return [{"concept": r["concept"], "location": r["location"], "inspirations": r.get("inspirations", "")} for r in runs]
 
 
 @app.get("/")

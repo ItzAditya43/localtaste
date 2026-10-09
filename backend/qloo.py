@@ -78,6 +78,16 @@ def search(query, take=5):
     ]
 
 
+def resolve_location(location):
+    """How Qloo understands a place name, e.g. 'Shoreditch, Hackney, London, ...'. None if it is not recognised."""
+    try:
+        res = _get("/v2/insights", **{"filter.type": "urn:entity:place", "filter.location.query": location, "take": 1})
+    except requests.HTTPError:
+        return None
+    found = res.get("query", {}).get("localities", {}).get("filter", [])
+    return found[0].get("disambiguation") or found[0].get("name") if found else None
+
+
 def places(location, tags=None, take=20, page=1):
     """Venues in an area, most popular first. `tags` is a comma-separated tag id list."""
     params = {"filter.type": "urn:entity:place", "filter.location.query": location, "take": take, "page": page}

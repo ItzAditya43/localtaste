@@ -40,7 +40,19 @@ h1 { font: 700 clamp(34px, 6vw, 60px)/1.04 Fraunces, Georgia, serif; letter-spac
 h2 { font: 600 26px/1.2 Fraunces, Georgia, serif; margin: 0 0 6px; letter-spacing: -.01em; }
 h3 { font: 600 12px/1 Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
-form.ask { padding: 20px; display: grid; grid-template-columns: 1.6fr 1fr auto; gap: 14px; align-items: end; }
+form.ask { padding: 20px; display: grid; grid-template-columns: 1fr 1fr auto; gap: 14px; align-items: end; }
+form.ask .wide { grid-column: 1 / -1; }
+.optional { font-weight: 400; color: var(--muted); }
+.resolved { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.diff { padding: 22px 26px; margin-bottom: 20px; }
+.diff table { width: 100%; border-collapse: collapse; }
+.diff th { text-align: left; font: 600 15px Fraunces, serif; padding: 0 12px 10px 0; width: 44%; }
+.diff th:first-child, .diff td:first-child { width: 12%; }
+.diff td { vertical-align: top; padding: 10px 12px 10px 0; border-top: 1px solid var(--line); }
+.diff td:first-child { font: 600 12px/1.9 Inter; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.elsewhere { padding: 18px 20px; margin-top: 20px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
+.ghost { background: var(--ink); color: var(--bg); padding: 13px 20px; }
+.ghost[disabled] { opacity: .55; cursor: progress; }
 label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 input, textarea { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; resize: none; }
 input:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -99,7 +111,8 @@ footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13p
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 @keyframes pulse { 50% { opacity: .25; } }
 @media (max-width: 820px) {
-  form.ask, .cols.two { grid-template-columns: 1fr; }
+  form.ask, .cols.two, .elsewhere { grid-template-columns: 1fr; }
+  .diff { padding: 18px; overflow-x: auto; }
   .rec { grid-template-columns: 1fr; gap: 4px; }
   .brief { padding: 20px; }
 }
@@ -118,13 +131,17 @@ footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13p
     <p class="lede">Describe what you want to open and where. An agent reads the area's taste in music, brands, film and food, studies who you'd compete with, and writes a launch brief where every idea points to the data behind it.</p>
 
     <form class="ask card" id="ask">
-      <div>
+      <div class="wide">
         <label for="concept">What are you opening?</label>
         <textarea id="concept" rows="2" maxlength="300" required placeholder="A specialty coffee shop and vinyl listening room"></textarea>
       </div>
       <div>
         <label for="location">Where?</label>
         <input id="location" maxlength="80" required placeholder="Neighbourhood, City">
+      </div>
+      <div>
+        <label for="admires">Places, brands or artists you admire <span class="optional">(optional)</span></label>
+        <input id="admires" maxlength="120" placeholder="Devoción, Rough Trade">
       </div>
       <button class="go" id="go">Write my brief</button>
     </form>
@@ -147,9 +164,18 @@ footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13p
         <button role="tab" data-view="qloo" aria-selected="true">With Qloo</button>
         <button role="tab" data-view="both" aria-selected="false">Side by side</button>
         <button role="tab" data-view="plain" aria-selected="false">Same model, no Qloo</button>
+        <button role="tab" data-view="areas" aria-selected="false" id="areas-tab" hidden>Two neighbourhoods</button>
       </div>
+      <div id="diff"></div>
       <div class="cols" id="briefs"></div>
       <div class="legend" id="legend"></div>
+      <form class="card elsewhere" id="elsewhere">
+        <div>
+          <label for="other">Would the same idea land differently somewhere else?</label>
+          <input id="other" maxlength="80" required placeholder="Another neighbourhood, City">
+        </div>
+        <button class="ghost" id="other-go">Compare neighbourhoods</button>
+      </form>
     </section>
   </main>
 
@@ -162,7 +188,7 @@ footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13p
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const KIND_LABEL = { venue: "Venue", artist: "Artist", brand: "Brand", movie: "Film", tv_show: "TV", genre: "Music genre", food: "Food scene", ambience: "Ambience", detail: "Known for" };
-let current = null, source = null;
+let current = null, other = null, source = null;
 
 function chip(name, kinds, strict) {
   const kind = kinds[String(name).toLowerCase()];
@@ -173,6 +199,7 @@ function chip(name, kinds, strict) {
 function venueMeta(v) {
   if (!v) return "";
   const bits = [];
+  if (v.category) bits.push(v.category);
   if (v.rating) bits.push(`★ ${Number(v.rating).toFixed(1)}`);
   if (v.price_level) bits.push("$".repeat(v.price_level));
   if (v.popularity) bits.push(`popularity ${Math.round(v.popularity * 100)}`);
@@ -204,9 +231,33 @@ function renderBrief(b, data, grounded) {
   </article>`;
 }
 
+function cites(data, wanted) {
+  const names = [...(data.brief.recommendations || []), ...(data.brief.risks || [])].flatMap((r) => r.signals || []);
+  return [...new Set(names)].filter((n) => wanted.includes(data.kinds[n.toLowerCase()]));
+}
+
+function renderDiff(a, b) {
+  const rows = [["Music", ["artist", "genre"]], ["Brands", ["brand"]], ["Food", ["food", "detail"]], ["Feel", ["ambience"]], ["Screen", ["movie", "tv_show"]]];
+  const rivals = (d) => (d.brief.competitors || []).map((c) => c.name);
+  const cell = (d, list) => `<div class="chips">${list.map((n) => chip(n, d.kinds, false)).join("") || `<span class="chip unverified">nothing cited</span>`}</div>`;
+  const body = rows.map(([label, kinds]) => [label, cites(a, kinds), cites(b, kinds)]).filter((r) => r[1].length || r[2].length)
+    .map(([label, x, y]) => `<tr><td>${label}</td><td>${cell(a, x)}</td><td>${cell(b, y)}</td></tr>`).join("");
+  return `<div class="card diff"><h3>What Qloo says is different</h3><table>
+    <tr><th></th><th>${esc(a.location)}</th><th>${esc(b.location)}</th></tr>${body}
+    <tr><td>Rivals</td><td>${cell(a, rivals(a))}</td><td>${cell(b, rivals(b))}</td></tr></table></div>`;
+}
+
 function show(view) {
   if (!current) return;
-  view = ["qloo", "both", "plain"].includes(view) ? view : "qloo";
+  view = ["qloo", "both", "plain"].includes(view) || (view === "areas" && other) ? view : "qloo";
+  $("diff").innerHTML = "";
+  if (view === "areas") {
+    document.querySelectorAll(".tabs button").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
+    $("diff").innerHTML = renderDiff(current, other);
+    $("briefs").className = "cols two";
+    $("briefs").innerHTML = [current, other].map((d) => renderBrief(d.brief, d, true).replace("Grounded in Qloo", esc(d.location))).join("");
+    return;
+  }
   document.querySelectorAll(".tabs button").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
   const hasPlain = current.plain && current.plain.positioning;
   const parts = [];
@@ -216,8 +267,22 @@ function show(view) {
   $("briefs").innerHTML = parts.join("");
 }
 
-function finish(data) {
+function finish(data, compare) {
+  if (compare) {
+    other = data;
+    const link = new URLSearchParams(window.location.search);
+    link.set("vs", data.location);
+    history.replaceState(null, "", `?${link}`);
+    $("status").hidden = true;
+    $("areas-tab").hidden = false;
+    $("result").hidden = false;
+    show("areas");
+    $("result").scrollIntoView({ block: "start" });
+    return;
+  }
   current = data;
+  other = null;
+  $("areas-tab").hidden = true;
   const plainNames = [...(data.plain.recommendations || []), ...(data.plain.risks || [])].flatMap((r) => r.signals || []);
   const matched = plainNames.filter((n) => data.kinds[String(n).toLowerCase()]).length;
   $("status").hidden = true;
@@ -229,14 +294,16 @@ function finish(data) {
     <span><b>${matched}/${plainNames.length}</b>names cited without Qloo that match anything Qloo returned</span>`;
   $("legend").innerHTML = Object.entries(KIND_LABEL).map(([k, l]) => `<span class="chip ${k}">${l}</span>`).join("");
   $("result").hidden = false;
-  show(new URLSearchParams(window.location.search).get("view") || "qloo");
+  const params = new URLSearchParams(window.location.search);
+  show(params.get("view") || "qloo");
   $("result").scrollIntoView({ block: "start" });
+  if (params.get("vs")) { $("other").value = params.get("vs"); start(data.concept, params.get("vs"), data.inspirations || "", true); }
 }
 
-function start(concept, location) {
+function start(concept, location, admires = "", compare = false) {
   if (source) source.close();
-  current = null;
-  $("go").disabled = true;
+  if (!compare) current = null;
+  $("go").disabled = $("other-go").disabled = true;
   $("steps").innerHTML = "";
   $("result").hidden = true;
   $("work").hidden = false;
@@ -244,9 +311,12 @@ function start(concept, location) {
   $("status").innerHTML = `<span class="dot"></span><span id="status-text">Planning the research…</span>`;
   $("work").scrollIntoView({ block: "start" });
   const view = new URLSearchParams(window.location.search).get("view");
-  history.replaceState(null, "", `?concept=${encodeURIComponent(concept)}&location=${encodeURIComponent(location)}${view ? `&view=${view}` : ""}`);
-  const done = () => { $("go").disabled = false; source.close(); };
-  source = new EventSource(`/api/run?concept=${encodeURIComponent(concept)}&location=${encodeURIComponent(location)}`);
+  const q = `concept=${encodeURIComponent(concept)}&location=${encodeURIComponent(location)}${admires ? `&inspirations=${encodeURIComponent(admires)}` : ""}`;
+  const vs = new URLSearchParams(window.location.search).get("vs");
+  if (!compare) history.replaceState(null, "", `?${q}${view ? `&view=${view}` : ""}${vs && !current ? `&vs=${encodeURIComponent(vs)}` : ""}`);
+  const mine = new EventSource(`/api/run?${q}`);
+  source = mine;
+  const done = () => { mine.close(); if (source === mine) $("go").disabled = $("other-go").disabled = false; };
   source.addEventListener("start", (e) => {
     $("work-sub").textContent = JSON.parse(e.data).saved
       ? "Replaying a saved run. Each line is a question the agent chose to ask Qloo."
@@ -256,12 +326,13 @@ function start(concept, location) {
     const s = JSON.parse(e.data), li = document.createElement("li");
     li.innerHTML = `<span class="num">${$("steps").children.length + 1}</span><div>
       <div class="step-title">${esc(s.title)}</div>
+      ${s.resolved_as ? `<div class="resolved">Qloo reads this as ${esc(s.resolved_as)}</div>` : ""}
       <div class="chips">${s.failed || (!s.names.length && s.tool !== "find_tags") ? `<span class="chip unverified">nothing found, trying another way</span>` : s.names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div></div>`;
     $("steps").appendChild(li);
     $("status-text").textContent = "Researching…";
   });
   source.addEventListener("writing", () => { $("status-text").textContent = "Writing the brief from what Qloo returned…"; });
-  source.addEventListener("result", (e) => { finish(JSON.parse(e.data)); done(); });
+  source.addEventListener("result", (e) => { done(); finish(JSON.parse(e.data), compare); });
   source.addEventListener("error", (e) => {
     const msg = e.data ? JSON.parse(e.data).message : "The connection dropped before the brief was finished. Please try again.";
     $("status").innerHTML = `<span class="error" style="padding:0">${esc(msg)}</span>`;
@@ -271,7 +342,11 @@ function start(concept, location) {
 
 $("ask").addEventListener("submit", (e) => {
   e.preventDefault();
-  start($("concept").value.trim(), $("location").value.trim());
+  start($("concept").value.trim(), $("location").value.trim(), $("admires").value.trim());
+});
+$("elsewhere").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (current) start(current.concept, $("other").value.trim(), current.inspirations || "", true);
 });
 document.querySelectorAll(".tabs button").forEach((t) => t.addEventListener("click", () => show(t.dataset.view)));
 
@@ -279,7 +354,8 @@ const shared = new URLSearchParams(location.search);
 if (shared.get("concept") && shared.get("location")) {
   $("concept").value = shared.get("concept");
   $("location").value = shared.get("location");
-  start(shared.get("concept"), shared.get("location"));
+  $("admires").value = shared.get("inspirations") || "";
+  start(shared.get("concept"), shared.get("location"), shared.get("inspirations") || "");
 }
 
 fetch("/api/examples").then((r) => r.json()).then((list) => {
@@ -289,7 +365,10 @@ fetch("/api/examples").then((r) => r.json()).then((list) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = `${x.concept.replace(/^An? /, "")} · ${x.location}`;
-    b.addEventListener("click", () => { $("concept").value = x.concept; $("location").value = x.location; start(x.concept, x.location); });
+    b.addEventListener("click", () => {
+      $("concept").value = x.concept; $("location").value = x.location; $("admires").value = x.inspirations || "";
+      start(x.concept, x.location, x.inspirations || "");
+    });
     box.appendChild(b);
   });
   box.hidden = false;
