@@ -30,7 +30,7 @@ Qloo's neighbourhood-level location signal is sparse, so LocalTaste derives an a
 
 ## Run it locally
 
-Requires Python 3.11+.
+Developed and tested on Python 3.14.
 
 ```bash
 git clone https://github.com/ItzAditya43/localtaste.git
@@ -56,7 +56,7 @@ From the command line: `python agent.py "A natural wine bar with small plates" "
 
 `python eval_brief.py out.json` runs four concept and city cases and reports tool calls, signals cited, run time, an audit for unsupported factual claims, and how many of each brief's named competitors Qloo can find in that city.
 
-In the last run, all 16 competitors in the grounded briefs were found (they come from Qloo), against 7 to 9 of 16 for the model without Qloo across runs. "Not found" includes real venues Qloo lacks, so this is not a hallucination rate.
+In the last run, all 16 competitors in the grounded briefs were found (they come from Qloo), against 7 or 8 of 16 for the model without Qloo across three runs. "Not found" includes real venues Qloo lacks, so this is not a hallucination rate.
 
 ## What it does not do
 
