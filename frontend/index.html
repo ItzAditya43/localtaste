@@ -187,7 +187,7 @@ footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13p
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const KIND_LABEL = { venue: "Venue", artist: "Artist", brand: "Brand", movie: "Film", tv_show: "TV", genre: "Music genre", food: "Food scene", ambience: "Ambience", detail: "Known for" };
+const KIND_LABEL = { venue: "Venue", artist: "Artist", brand: "Brand", movie: "Film", tv_show: "TV", genre: "Music genre", food: "Food", ambience: "Feel" };
 let current = null, other = null, source = null;
 
 function chip(name, kinds, strict) {
@@ -221,7 +221,7 @@ function renderBrief(b, data, grounded) {
     </div></div>`).join("");
   const risks = (b.risks || []).map((r) => `<div class="risk"><p>${esc(r.risk)}</p><div class="chips">${(r.signals || []).map((s) => chip(s, kinds, true)).join("")}</div></div>`).join("");
   return `<article class="card brief ${grounded ? "" : "plain"}">
-    <span class="tag">${grounded ? "Grounded in Qloo" : "Same model, no Qloo"}</span>
+    <span class="tag">${grounded ? "Grounded in Qloo" : (data.same_model === false ? "A language model, no Qloo" : "Same model, no Qloo")}</span>
     <p class="position">${esc(b.positioning)}</p>
     <p class="area">${esc(b.area_read)}</p>
     <h3>Who you're up against</h3><div class="grid">${comps}</div>
@@ -237,7 +237,7 @@ function cites(data, wanted) {
 }
 
 function renderDiff(a, b) {
-  const rows = [["Music", ["artist", "genre"]], ["Brands", ["brand"]], ["Food", ["food", "detail"]], ["Feel", ["ambience"]], ["Screen", ["movie", "tv_show"]]];
+  const rows = [["Music", ["artist", "genre"]], ["Brands", ["brand"]], ["Food", ["food"]], ["Feel", ["ambience"]], ["Screen", ["movie", "tv_show"]]];
   const rivals = (d) => (d.brief.competitors || []).map((c) => c.name);
   const cell = (d, list) => `<div class="chips">${list.map((n) => chip(n, d.kinds, false)).join("") || `<span class="chip unverified">nothing cited</span>`}</div>`;
   const body = rows.map(([label, kinds]) => [label, cites(a, kinds), cites(b, kinds)]).filter((r) => r[1].length || r[2].length)
@@ -327,9 +327,12 @@ function start(concept, location, admires = "", compare = false) {
     li.innerHTML = `<span class="num">${$("steps").children.length + 1}</span><div>
       <div class="step-title">${esc(s.title)}</div>
       ${s.resolved_as ? `<div class="resolved">Qloo reads this as ${esc(s.resolved_as)}</div>` : ""}
-      <div class="chips">${s.failed || (!s.names.length && s.tool !== "find_tags") ? `<span class="chip unverified">nothing found, trying another way</span>` : s.names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div></div>`;
+      <div class="chips">${s.failed || !s.names.length ? `<span class="chip unverified">nothing found, trying another way</span>` : s.names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div></div>`;
     $("steps").appendChild(li);
     $("status-text").textContent = "Researching…";
+  });
+  source.addEventListener("waiting", (e) => {
+    $("status-text").textContent = `The free model tier this demo runs on is rate limited. Resuming in about ${JSON.parse(e.data).seconds} seconds…`;
   });
   source.addEventListener("writing", () => { $("status-text").textContent = "Writing the brief from what Qloo returned…"; });
   source.addEventListener("result", (e) => { done(); finish(JSON.parse(e.data), compare); });

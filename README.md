@@ -8,13 +8,12 @@ Built for the Qloo Agentic Hackathon.
 
 ## How it uses Qloo
 
-Qloo's neighbourhood-level location signal is sparse, so LocalTaste derives an area's taste from the audiences of its venues. The agent has seven tools, all backed by the Qloo API:
+Qloo's neighbourhood-level location signal is sparse, so LocalTaste derives an area's taste from the audiences of its venues. The agent has six tools, all backed by the Qloo API:
 
 | Tool | Qloo query | Purpose |
 |---|---|---|
 | `area_taste` | Places filtered by location, then those venues as `signal.interests.entities` for artists, brands, films, TV and typed tags; city-level `signal.location` for artists | What this neighbourhood's audience favours |
-| `find_tags` | `/v2/tags` search | Map a concept ("wine bar") to Qloo tag ids |
-| `competitors` | Places filtered by location and tags | Comparable venues with rating, price tier, popularity and what they are known for |
+| `competitors` | `/v2/tags` search restricted to place categories, then places filtered by location and tag | Comparable venues with rating, price tier, popularity, what they serve and how they feel |
 | `audience_taste` | Competitor ids as signals into another domain | What the competitors' audience also loves |
 | `venues_for_taste` | Entity signals ranked over places in the area | Where fans of an inspiration already go |
 | `lookup` | `/search` | Resolve a named venue, brand or artist |
@@ -49,6 +48,7 @@ Open http://localhost:8000. The five saved examples load without any API keys.
 | `QLOO_API_URL` | Defaults to `https://hackathon.api.qloo.com` |
 | `GROQ_API_KEY` | Groq key for both models |
 | `GROQ_MODEL`, `GROQ_RESEARCH_MODEL` | Optional model overrides |
+| `GROQ_FALLBACK_MODELS` | Optional comma-separated models to use when one reaches its daily limit |
 
 From the command line: `python agent.py "A natural wine bar with small plates" "Bandra West, Mumbai"`.
 
@@ -62,7 +62,7 @@ In the last run, all 16 competitors in the grounded briefs were found (they come
 
 LocalTaste describes who an area's audience is and what they favour. It does not predict whether a business will succeed. During development we tested whether taste fit predicts a venue's popularity or rating, and whether simulated local personas match a venue's real audience; neither held up, so neither is in the product. `panel.py` and `eval_audience.py` are kept as the record of those tests.
 
-Other limits: results are thinner outside major cities, the free LLM tier allows one live run at a time, and each visitor is limited to 8 new briefs an hour.
+Other limits: results are thinner outside major cities. On Groq's free tier each model has a daily token allowance, enough for roughly 25 full live runs a day; after that the agent falls back to other models and runs more slowly, and finally asks visitors to use the saved examples. One live run happens at a time, and each visitor is limited to 8 new briefs an hour.
 
 ## Layout
 

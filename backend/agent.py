@@ -12,9 +12,8 @@ from llm import RESEARCH_MODEL, chat, chat_json
 from qloo import _get, _insights
 
 DOMAINS = ["artist", "brand", "movie", "tv_show"]
-DETAIL_TAGS = ("ambience", "decor", "menu_highlight", "specialty_dish", "good_for", "cuisine", "setting")
 MAX_STEPS = 6
-MIN_CALLS, MAX_CALLS = 6, 10
+MIN_CALLS, MAX_CALLS = 4, 8
 MIN_RECS = 5
 MIN_SIGNALS = {"events": 2}
 
@@ -23,8 +22,8 @@ def _names(items, n=6):
     return [i["name"] for i in items[:n] if i.get("name")]
 
 
-def find_tags(query):
-    res = _get("/v2/tags", **{"filter.query": query, "take": 8})
+def find_tags(query, take=8):
+    res = _get("/v2/tags", **{"filter.query": query, "take": take})
     return [{"id": t["id"], "name": t["name"]} for t in res["results"]["tags"]]
 
 
@@ -61,20 +60,35 @@ def area_taste(location):
     }
 
 
-def competitors(location, tag_ids):
+FOOD_TAGS, FEEL_TAGS = ("menu_highlight", "specialty_dish", "cuisine"), ("ambience", "decor", "setting", "good_for")
+PLACE_TAG_TYPES = "urn:tag:category:place,urn:tag:genre:place"
+
+
+def _tags_for(kind):
+    """Qloo place tags for a plain description such as 'coffee shop'."""
+    res = _get("/v2/tags", **{"filter.query": kind, "filter.tag.types": PLACE_TAG_TYPES, "take": 6})
+    return [t["id"] for t in res["results"]["tags"] if ":hotel:" not in t["id"]][:2]
+
+
+def competitors(location, kinds):
     seen, out = set(), []
-    for tag in tag_ids[:3]:
-        ents = _insights(**{"filter.type": "urn:entity:place", "filter.location.query": location,
-                            "filter.tags": tag, "take": 10}).get("entities", [])
-        for e in ents:
-            if e["entity_id"] in seen or not e.get("name"):
-                continue
-            seen.add(e["entity_id"])
-            p = e.get("properties", {})
-            detail = [t["name"] for t in e.get("tags", []) if t.get("name") and any(f":{d}:" in t.get("id", "") for d in DETAIL_TAGS)]
-            out.append({"id": e["entity_id"], "name": e["name"], "category": tag.split(":")[-1].replace("_", " "),
-                        "popularity": round(e.get("popularity") or 0, 2),
-                        "rating": p.get("business_rating"), "price_level": p.get("price_level"), "known_for": detail[:6]})
+    tagged = {kind: _tags_for(kind) for kind in kinds[:3]}
+    if not any(tagged.values()):
+        raise ValueError(f"Qloo has no place category matching {kinds}. Try more common names, e.g. 'book store', 'bar', 'cafe'.")
+    for kind, tags in tagged.items():
+        for tag in tags:
+            ents = _insights(**{"filter.type": "urn:entity:place", "filter.location.query": location,
+                                "filter.tags": tag, "take": 10}).get("entities", [])
+            for e in ents:
+                if e["entity_id"] in seen or not e.get("name"):
+                    continue
+                seen.add(e["entity_id"])
+                p = e.get("properties", {})
+                tags = [t for t in e.get("tags", []) if t.get("name")]
+                pick = lambda types: [t["name"] for t in tags if any(f":{d}:" in t.get("id", "") for d in types)][:5]
+                out.append({"id": e["entity_id"], "name": e["name"], "category": kind,
+                            "popularity": round(e.get("popularity") or 0, 2), "rating": p.get("business_rating"),
+                            "price_level": p.get("price_level"), "known_for": pick(FOOD_TAGS), "feel": pick(FEEL_TAGS)})
     return sorted(out, key=lambda v: -v["popularity"])[:12]
 
 
@@ -107,19 +121,18 @@ _S, _IDS = {"type": "string"}, {"type": "array", "items": {"type": "string"}}
 _DOMAIN = {"type": "string", "enum": DOMAINS}
 TOOLS = [
     _fn("area_taste", "Taste profile of a neighbourhood as 'Neighbourhood, City': artists favoured by its venues' audiences and by the city, music genres, brands, films, TV, food scene and ambience.", {"location": _S}, ["location"]),
-    _fn("find_tags", "Find Qloo tag ids for a kind of place, cuisine or feature (e.g. 'coffee shop', 'wine bar'). Needed before competitors.", {"query": _S}, ["query"]),
-    _fn("competitors", "Existing venues in an area matching tag ids, with popularity, rating, price level and what they are known for. Prefer urn:tag:category:place:* ids.", {"location": _S, "tag_ids": _IDS}, ["location", "tag_ids"]),
+    _fn("competitors", "Existing venues of given kinds in an area, with popularity, rating, price tier, what they serve and how they feel. Pass 1-3 plain kinds, e.g. ['coffee shop', 'record store'].", {"location": _S, "kinds": _IDS}, ["location", "kinds"]),
     _fn("lookup", "Find the Qloo entity id of a named venue, brand, artist or title.", {"name": _S}, ["name"]),
     _fn("audience_taste", "What the audience of given entities (by id) also loves in another domain. Use on competitor ids or on the owner's inspirations.", {"entity_ids": _IDS, "domain": _DOMAIN}, ["entity_ids", "domain"]),
     _fn("venues_for_taste", "Venues in an area ranked by affinity to given entity ids. Shows where fans of an inspiration already go.", {"location": _S, "entity_ids": _IDS}, ["location", "entity_ids"]),
     _fn("city_taste", "What a whole city over-indexes on in one domain. City names only, not neighbourhoods.", {"city": _S, "domain": _DOMAIN}, ["city", "domain"]),
 ]
-IMPL = {f.__name__: f for f in (area_taste, find_tags, competitors, lookup, audience_taste, venues_for_taste, city_taste)}
+IMPL = {f.__name__: f for f in (area_taste, competitors, lookup, audience_taste, venues_for_taste, city_taste)}
 
 RESEARCH = (
     "You research a neighbourhood for someone opening a business there, using Qloo taste data through tools. "
     "Call several tools per turn where they are independent. The area's taste is given to you. Always cover: the direct competitors "
-    "(find_tags then competitors; if fewer than 4 come back, retry once with a broader category tag), and what the competitors' audience loves in at least two other domains "
+    "(competitors with the kinds of place this concept is; if fewer than 4 come back, retry once with broader kinds), and what the competitors' audience loves in at least two other domains "
     "(audience_taste with the ids of the 3-5 closest competitors). If the owner names places, brands or artists they admire, "
     "lookup each one, then use venues_for_taste to see where their fans already go locally and audience_taste to see what "
     "else those fans love. "
@@ -140,8 +153,9 @@ BRIEF = (
     "price levels, menu on what competitors are known for or the area's food scene, decor on ambience. For music, "
     "the artists favoured by local venues' audiences reflect the neighbourhood and the city-wide artists the wider "
     "city; use whichever suits the concept, and prefer the city-wide list when the venue list looks unrelated to the "
-    "local culture. Say only what the evidence shows about a name: that this audience favours it, or what a venue is "
-    "known for. Never add facts about a named artist, brand or venue from your own knowledge (where they are from, "
+    "local culture. Say only what the evidence shows about a name: that this audience favours it, what kind of place a venue is, "
+    "what it serves and how it feels. Do not call anything local, popular, famous, iconic or beloved unless a number in "
+    "the evidence shows it. Never add facts about a named artist, brand or venue from your own knowledge (where they are from, "
     "what they sell, that they are local). Write for a business owner in plain language; never mention data field "
     "names, tools or the word 'evidence'. Do not decorate ideas with unrelated "
     "names, and drop any idea the evidence does not support. Give 6-8 recommendations covering at least menu, music, decor and partners, and 3-4 "
@@ -159,13 +173,13 @@ GENERIC = (
 def _lite(tool, result):
     """What the planning model sees: enough to choose the next call, without the detail kept for the brief."""
     if tool == "competitors" and isinstance(result, list):
-        return [{k: v[k] for k in ("id", "name", "popularity", "price_level")} for v in result]
+        return [{k: v[k] for k in ("id", "name", "category", "popularity")} for v in result]
     return result
 
 
 def research(concept, location, inspirations="", on_step=None):
     """Read the area, then let the model query Qloo until it has enough. Returns the ledger of tool calls and results."""
-    ledger, handles, names = [], {}, {}
+    ledger, handles, names, models = [], {}, {}, set()
 
     def shorten(x):
         """Swap Qloo ids for short handles so the model does not have to copy UUIDs."""
@@ -199,7 +213,7 @@ def research(concept, location, inspirations="", on_step=None):
         if inspirations and not any(s["tool"] == "lookup" and s["result"] for s in ok):
             todo.append(f"lookup for what the owner admires ({inspirations}), then audience_taste or venues_for_taste with those ids")
         if not any(s["tool"] == "competitors" and s["result"] for s in ok):
-            todo.append("find_tags then competitors, with broader tags if needed")
+            todo.append("competitors, with broader kinds if needed")
         elif len({s["args"].get("domain") for s in ok if s["tool"] == "audience_taste"}) < 2:
             todo.append("audience_taste on the competitor ids for two different domains")
         return todo
@@ -216,10 +230,14 @@ def research(concept, location, inspirations="", on_step=None):
             messages.append({"role": "user", "content": "Still required before you finish: " + "; ".join(todo) + "."})
             continue
         messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
+        models.add(msg.get("_model"))
         for c in calls:
             name = c["function"]["name"]
             try:
                 args = json.loads(c["function"]["arguments"] or "{}")
+                if any(s["tool"] == name and s["args"] == args for s in ledger):
+                    messages.append({"role": "tool", "tool_call_id": c["id"], "content": '"Already asked; use the earlier answer."'})
+                    continue
                 real = {**args, "entity_ids": [handles.get(i, i) for i in args["entity_ids"]]} if "entity_ids" in args else args
                 result = shorten(IMPL[name](**real))
             except Exception as ex:  # surfaced to the model so it can correct the call
@@ -241,15 +259,16 @@ _AREA_KEYS = {"popular_venues": "most popular venues", "local_venue_artists": "a
               "movies": "films", "tv_shows": "TV shows", "food_scene": "food scene", "ambience": "ambience"}
 
 
-_VENUE_KEYS = {"price_level": "price tier (1 cheap - 4 luxury)", "known_for": "known for", "rating": "rating out of 5"}
-FIELD_NAMES = ("price_level", "known_for", "city_artists", "local_venue_artists", "popular_venues", "food_scene",
+_VENUE_KEYS = {"price_level": "price tier (1 cheap - 4 luxury)", "known_for": "serves", "feel": "feels", "rating": "rating out of 5",
+               "category": "what it is"}
+FIELD_NAMES = ("price_level", "known_for", "what it is", "city_artists", "local_venue_artists", "popular_venues", "food_scene",
                "music_genres", "audience_taste", "area_taste", "venues_for_taste", "tv_shows")
 
 
 def _evidence(ledger):
     lines = []
     for s in ledger:
-        if s["tool"] == "find_tags" or (isinstance(s["result"], dict) and "error" in s["result"]):
+        if isinstance(s["result"], dict) and "error" in s["result"]:
             continue
         scope = ", ".join(str(v) for k, v in s["args"].items() if k != "entity_ids" and k != "tag_ids")
         res = s["result"]
@@ -292,7 +311,7 @@ def run(concept, location, inspirations="", on_step=None):
                f"{json.dumps(weak, ensure_ascii=False)}. Rewrite the brief so every signal is an exact name from the "
                "evidence and is the right kind of evidence for its idea; replace or drop ideas you cannot support.")
         brief = chat_json(BRIEF, fix)
-    return {"brief": clean(brief), "ledger": ledger}
+    return {"brief": clean(brief), "ledger": ledger, "writer": brief.pop("_model", None)}
 
 
 def generic(concept, location, inspirations=""):
@@ -302,7 +321,7 @@ def generic(concept, location, inspirations=""):
 
 
 FITTING = {"music": {"artist", "genre"}, "partners": {"brand", "venue"}, "pricing": {"venue"},
-           "menu": {"venue", "food", "detail"}, "decor": {"venue", "ambience", "detail", "brand"}}
+           "menu": {"venue", "food"}, "decor": {"venue", "ambience", "brand"}}
 
 
 def signal_kinds(ledger):
@@ -327,7 +346,8 @@ def signal_kinds(ledger):
         elif tool in ("competitors", "venues_for_taste"):
             add(res, "venue")
             for v in res:
-                add(v.get("known_for", []), "detail")
+                add(v.get("known_for", []), "food")
+                add(v.get("feel", []), "ambience")
         elif tool in ("audience_taste", "city_taste"):
             add(res, s["args"]["domain"])
         elif tool == "lookup":
@@ -354,8 +374,7 @@ def describe(step):
     domain = {"artist": "music", "brand": "brands", "movie": "films", "tv_show": "TV"}.get(a.get("domain"), "")
     return {
         "area_taste": f"Reading the taste of {a.get('location', 'the area')}",
-        "find_tags": f"Looking up how Qloo labels \u201c{a.get('query', '')}\u201d",
-        "competitors": f"Finding comparable venues in {a.get('location', 'the area')}",
+        "competitors": f"Finding {' and '.join(k + 's' for k in a.get('kinds', [])[:3]) or 'comparable venues'} in {a.get('location', 'the area')}",
         "lookup": f"Finding \u201c{a.get('name', '')}\u201d in Qloo",
         "audience_taste": f"Asking what fans of {who} also love: {domain}",
         "venues_for_taste": f"Finding where fans of {who} already go in {a.get('location', 'the area')}",
@@ -368,8 +387,6 @@ def preview(step, n=8):
     res = step["result"]
     if isinstance(res, dict) and "error" in res:
         return []
-    if step["tool"] == "find_tags":
-        return []
     if step["tool"] == "area_taste":
         return res["popular_venues"][:3] + res["city_artists"][:2] + res["brands"][:2] + res["music_genres"][:2]
     return list(dict.fromkeys((x.get("name") if isinstance(x, dict) else x) for x in res))[:n]
@@ -381,7 +398,7 @@ def venue_facts(ledger):
     for s in ledger:
         if s["tool"] in ("competitors", "venues_for_taste") and isinstance(s["result"], list):
             for v in s["result"]:
-                facts.setdefault(v["name"].lower(), {k: v.get(k) for k in ("category", "popularity", "rating", "price_level", "known_for", "affinity")})
+                facts.setdefault(v["name"].lower(), {k: v.get(k) for k in ("category", "popularity", "rating", "price_level", "known_for", "feel", "affinity")})
     return facts
 
 

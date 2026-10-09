@@ -4,6 +4,7 @@ Finished runs are saved under runs/ and replayed instantly when the same questio
 """
 import hashlib
 import json
+import logging
 import queue
 import re
 import threading
@@ -16,6 +17,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 import agent
+import llm
 
 ROOT = Path(__file__).resolve().parent
 RUNS = ROOT / "runs"
@@ -52,6 +54,7 @@ def _package(concept, location, inspirations, out, plain):
     ledger = out["ledger"]
     return {
         "concept": concept, "location": location, "inspirations": inspirations, "brief": out["brief"], "plain": plain,
+        "same_model": bool(plain) and plain.get("_model") == out.get("writer"),
         "steps": [_step_event(s) for s in ledger],
         "kinds": agent.signal_kinds(ledger), "venues": agent.venue_facts(ledger),
         "stats": {"qloo_calls": len(ledger), "signals": len(set(c.lower() for c in agent.cited(out["brief"])))},
@@ -76,6 +79,7 @@ def _live_run(concept, location, inspirations, visitor):
     def work():
         try:
             plain = {}
+            llm.on_wait = lambda seconds: events.put(("waiting", {"seconds": seconds}))
             side = threading.Thread(target=lambda: plain.update(agent.generic(concept, location, inspirations)))
             side.start()
             out = agent.run(concept, location, inspirations, on_step=lambda s: events.put(("step", _step_event(s))))
@@ -87,7 +91,11 @@ def _live_run(concept, location, inspirations, visitor):
             events.put(("result", result))
         except agent.UnknownPlace as ex:
             events.put(("error", {"message": str(ex)}))
+        except llm.Busy:
+            logging.exception("model busy")
+            events.put(("error", {"message": "The free model tier this demo runs on is at its limit right now. Please try again in a minute; saved examples still work."}))
         except Exception:
+            logging.exception("run failed")
             events.put(("error", {"message": "Something went wrong while writing this brief. Please try again in a minute."}))
         finally:
             _live.release()
