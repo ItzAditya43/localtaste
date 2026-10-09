@@ -8,12 +8,14 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import qloo
-from llm import chat, chat_json
+from llm import RESEARCH_MODEL, chat, chat_json
 from qloo import _get, _insights
 
 DOMAINS = ["artist", "brand", "movie", "tv_show"]
 DETAIL_TAGS = ("ambience", "decor", "menu_highlight", "specialty_dish", "good_for", "cuisine", "setting")
 MAX_STEPS = 6
+MIN_CALLS, MAX_CALLS = 6, 10
+MIN_RECS = 5
 
 
 def _names(items, n=6):
@@ -124,10 +126,14 @@ BRIEF = (
     "genres or other items copied verbatim from the evidence. Section headings are not signals. Never cite a name that is not in the evidence. A signal must directly support "
     "its idea: music ideas rest on artists, partnerships on brands or non-competing venues, pricing on competitors' "
     "price levels, menu on what competitors are known for or the area's food scene, decor on ambience. For music, "
-    "local_venue_artists reflect the neighbourhood's venues and city_artists the wider city; use whichever suits the "
-    "concept, and prefer city_artists when the venue list looks unrelated to the local culture. Do not decorate ideas with unrelated "
+    "the artists favoured by local venues' audiences reflect the neighbourhood and the city-wide artists the wider "
+    "city; use whichever suits the concept, and prefer the city-wide list when the venue list looks unrelated to the "
+    "local culture. Say only what the evidence shows about a name: that this audience favours it, or what a venue is "
+    "known for. Never add facts about a named artist, brand or venue from your own knowledge (where they are from, "
+    "what they sell, that they are local). Write for a business owner in plain language; never mention data field "
+    "names, tools or the word 'evidence'. Do not decorate ideas with unrelated "
     "names, and drop any idea the evidence does not support. Give 6-8 recommendations covering at least menu, music, decor and partners, and 3-4 "
-    "competitors. Be specific to this neighbourhood; avoid advice that would fit anywhere. price_level is a 1-4 scale "
+    "competitors. Be specific to this neighbourhood; avoid advice that would fit anywhere. Price tier is a 1-4 scale "
     "(1 cheap, 4 luxury), not a currency amount. Partners must be non-competing brands or venues, never direct "
     "competitors. Give 2-3 risks, each resting on evidence such as a strong competitor or a mismatch with the area's "
     "taste, with its signals. Reply as JSON: " + BRIEF_SCHEMA
@@ -136,6 +142,13 @@ GENERIC = (
     "You write a launch brief for a new local business from your own general knowledge. Give 6-8 recommendations covering "
     "at least menu, music, decor and partners, and 3-4 competitors. Reply as JSON: " + BRIEF_SCHEMA
 )
+
+
+def _lite(tool, result):
+    """What the planning model sees: enough to choose the next call, without the detail kept for the brief."""
+    if tool == "competitors" and isinstance(result, list):
+        return [{k: v[k] for k in ("id", "name", "popularity", "price_level")} for v in result]
+    return result
 
 
 def research(concept, location, on_step=None):
@@ -167,7 +180,7 @@ def research(concept, location, on_step=None):
 
     nudges = 0
     for _ in range(MAX_STEPS + 2):
-        msg = chat(messages, tools=TOOLS)
+        msg = chat(messages, tools=TOOLS, model=RESEARCH_MODEL)
         calls = msg.get("tool_calls") or []
         if not calls:
             todo = missing()
@@ -188,7 +201,9 @@ def research(concept, location, on_step=None):
             ledger.append({"tool": name, "args": args, "result": result})
             if on_step:
                 on_step(ledger[-1])
-            messages.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(result, ensure_ascii=False)})
+            messages.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(_lite(name, result), ensure_ascii=False)})
+        if len(ledger) >= MAX_CALLS or (len(ledger) >= MIN_CALLS and not missing()):
+            break
     return ledger
 
 
@@ -197,13 +212,28 @@ _LABELS = {"area_taste": "Taste of the area", "competitors": "Competing venues",
            "city_taste": "City-wide taste"}
 
 
+_AREA_KEYS = {"popular_venues": "most popular venues", "local_venue_artists": "artists favoured by local venues' audiences",
+              "city_artists": "artists favoured across the city", "music_genres": "music genres", "brands": "brands",
+              "movies": "films", "tv_shows": "TV shows", "food_scene": "food scene", "ambience": "ambience"}
+
+
+_VENUE_KEYS = {"price_level": "price tier (1 cheap - 4 luxury)", "known_for": "known for", "rating": "rating out of 5"}
+FIELD_NAMES = ("price_level", "known_for", "city_artists", "local_venue_artists", "popular_venues", "food_scene",
+               "music_genres", "audience_taste", "area_taste", "venues_for_taste", "tv_shows")
+
+
 def _evidence(ledger):
     lines = []
     for s in ledger:
         if s["tool"] == "find_tags" or (isinstance(s["result"], dict) and "error" in s["result"]):
             continue
         scope = ", ".join(str(v) for k, v in s["args"].items() if k != "entity_ids" and k != "tag_ids")
-        lines.append(f"[{_LABELS[s['tool']]} - {scope}]\n{json.dumps(s['result'], ensure_ascii=False)}")
+        res = s["result"]
+        if s["tool"] == "area_taste":
+            res = {_AREA_KEYS[k]: v for k, v in res.items()}
+        elif s["tool"] in ("competitors", "venues_for_taste"):
+            res = [{_VENUE_KEYS.get(k, k): x for k, x in v.items() if k != "id"} for v in res]
+        lines.append(f"[{_LABELS[s['tool']]} - {scope}]\n{json.dumps(res, ensure_ascii=False)}")
     return "\n\n".join(lines)
 
 
@@ -217,18 +247,22 @@ def run(concept, location, on_step=None):
     known = set(kinds)
     prompt = f"Concept: {concept}\nLocation: {location}\n\nEVIDENCE\n{_evidence(ledger)}"
     brief = chat_json(BRIEF, prompt)
+
+    def clean(b):
+        for r in b.get("recommendations", []) + b.get("risks", []):
+            r["signals"] = [c for c in dict.fromkeys(r.get("signals", [])) if c.lower() in known]
+        b["recommendations"] = [r for r in b.get("recommendations", []) if r["signals"] and not misfit(r, kinds)]
+        return b
+
     bad = [c for c in cited(brief) if c.lower() not in known]
     weak = [r["idea"] for r in brief.get("recommendations", []) if misfit(r, kinds)]
-    if bad or weak:
+    if len(brief.get("recommendations", [])) - len(weak) < MIN_RECS or len(bad) > 3:
         fix = (f"{prompt}\n\nYOUR PREVIOUS BRIEF\n{json.dumps(brief, ensure_ascii=False)}\n\nProblems to fix. Signals not "
                f"found in the evidence: {json.dumps(bad, ensure_ascii=False)}. Ideas whose signals do not support them: "
                f"{json.dumps(weak, ensure_ascii=False)}. Rewrite the brief so every signal is an exact name from the "
                "evidence and is the right kind of evidence for its idea; replace or drop ideas you cannot support.")
         brief = chat_json(BRIEF, fix)
-    for r in brief.get("recommendations", []) + brief.get("risks", []):
-        r["signals"] = [c for c in r.get("signals", []) if c.lower() in known]
-    brief["recommendations"] = [r for r in brief.get("recommendations", []) if r["signals"] and not misfit(r, kinds)]
-    return {"brief": brief, "ledger": ledger}
+    return {"brief": clean(brief), "ledger": ledger}
 
 
 def generic(concept, location):
@@ -279,6 +313,15 @@ def misfit(rec, kinds):
     """True when none of a recommendation's signals is the kind of evidence its area calls for."""
     want = FITTING.get(rec.get("area"))
     return bool(want) and not any(kinds.get(c.lower()) in want for c in rec.get("signals", []))
+
+
+def prose(brief):
+    """All free text in a brief, for checks on what it says."""
+    parts = [brief.get("positioning", ""), brief.get("area_read", "")]
+    parts += [c.get("takeaway", "") for c in brief.get("competitors", [])]
+    parts += [f"{r.get('idea', '')} {r.get('why', '')}" for r in brief.get("recommendations", [])]
+    parts += [r.get("risk", "") for r in brief.get("risks", [])]
+    return "\n".join(parts)
 
 
 def cited(brief):

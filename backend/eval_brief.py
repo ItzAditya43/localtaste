@@ -4,7 +4,23 @@ import sys
 import time
 
 import agent
+import llm
 import qloo
+from llm import chat_json
+
+AUDIT = (
+    "You audit a business brief against the data it was written from. List every statement in the brief that asserts a "
+    "fact about a named artist, brand, venue, film or show which the data does not contain (for example calling an "
+    "artist local, or describing what a brand sells). Ideas, suggestions and proposed partnerships are not facts. "
+    'Reply as JSON: {"unsupported_facts": ["quoted phrase"]}'
+)
+
+
+def audit(out):
+    text = agent.prose(out["brief"])
+    found = chat_json(AUDIT, f"DATA\n{agent._evidence(out['ledger'])}\n\nBRIEF\n{text}", temperature=0)
+    found["leaked_terms"] = [f for f in agent.FIELD_NAMES if f in text]
+    return found
 
 ALIASES = {"bangalore": "bengaluru"}
 
@@ -45,10 +61,14 @@ def rate(out):
 if __name__ == "__main__":
     results = []
     for concept, location in CASES:
-        t = time.time()
+        t, before = time.time(), dict(llm.usage)
         out = agent.run(concept, location)
         r = rate(out)
         r["seconds"] = round(time.time() - t)
+        r["llm_tokens"] = llm.usage["tokens"] - before["tokens"]
+        r["rate_limit_wait_s"] = round(llm.usage["waited"] - before["waited"])
+        a = audit(out)
+        r["unsupported_facts"], r["leaked_terms"] = a.get("unsupported_facts", []), a.get("leaked_terms", [])
         plain = agent.generic(concept, location)
         r["plain_llm"] = {"competitors_found_in_qloo": real_competitors(plain, location),
                           "names_cited": len(agent.cited(plain))}
