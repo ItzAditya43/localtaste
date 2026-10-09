@@ -4,73 +4,77 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LocalTaste: know the neighbourhood before you open</title>
-<meta name="description" content="An agent that reads a neighbourhood's taste with Qloo and writes a launch brief for your business.">
+<meta name="description" content="An agent that reads a neighbourhood's taste with Qloo, finds its taste twins around the world and writes a launch brief for your business.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c2410c'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%23fff' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='2' fill='%23fff'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 :root {
   --bg: #f6f1e7; --surface: #fffdf8; --ink: #1d1a16; --muted: #6b6257; --line: #e2d9c8;
-  --accent: #c2410c; --accent-ink: #fff; --ok: #166534; --warn: #9a3412;
+  --accent: #c2410c; --accent-2: #e07a1f; --accent-ink: #fff; --warn: #9a3412; --glow: rgba(224, 122, 31, .16);
   --venue: #fde7d3; --venue-ink: #7c2d12; --artist: #e3defc; --artist-ink: #3b2a8c;
   --brand: #d6f0e0; --brand-ink: #14532d; --screen: #fbe3ea; --screen-ink: #831843;
   --genre: #dcebfb; --genre-ink: #1e3a8a; --detail: #efe9dc; --detail-ink: #4a4237;
-  --shadow: 0 1px 2px rgba(60, 40, 10, .06), 0 8px 24px rgba(60, 40, 10, .06);
+  --twin: #fff0c2; --twin-ink: #713f12;
+  --shadow: 0 1px 2px rgba(60, 40, 10, .06), 0 10px 30px rgba(60, 40, 10, .07);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #15120f; --surface: #1e1a16; --ink: #f3ece0; --muted: #a79c8c; --line: #332c24;
-    --accent: #fb923c; --accent-ink: #1d1a16; --ok: #86efac; --warn: #fdba74;
+    --bg: #14110e; --surface: #1d1915; --ink: #f3ece0; --muted: #a79c8c; --line: #332c24;
+    --accent: #fb923c; --accent-2: #fdba74; --accent-ink: #1d1a16; --warn: #fdba74; --glow: rgba(251, 146, 60, .13);
     --venue: #43271a; --venue-ink: #fed7aa; --artist: #2c2752; --artist-ink: #c7d2fe;
     --brand: #173524; --brand-ink: #bbf7d0; --screen: #401a2a; --screen-ink: #fbcfe8;
     --genre: #1a2c48; --genre-ink: #bfdbfe; --detail: #2a251f; --detail-ink: #d6ccbc;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .25);
+    --twin: #3d3210; --twin-ink: #fde68a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .28);
   }
+  .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) saturate(.6); }
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+body::before { content: ""; position: fixed; inset: -20% -10% auto -10%; height: 70vh; z-index: -1; pointer-events: none;
+  background: radial-gradient(40% 55% at 78% 22%, var(--glow), transparent 70%), radial-gradient(35% 45% at 12% 8%, var(--glow), transparent 70%); }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
 header.top { display: flex; justify-content: space-between; align-items: center; padding: 22px 0; }
 .mark { font: 700 22px/1 Fraunces, Georgia, serif; letter-spacing: -.01em; }
 .mark span { color: var(--accent); }
-.powered { font-size: 13px; color: var(--muted); }
-h1 { font: 700 clamp(34px, 6vw, 60px)/1.04 Fraunces, Georgia, serif; letter-spacing: -.02em; margin: 28px 0 14px; max-width: 16ch; }
-.lede { font-size: 18px; color: var(--muted); max-width: 58ch; margin: 0 0 28px; }
-h2 { font: 600 26px/1.2 Fraunces, Georgia, serif; margin: 0 0 6px; letter-spacing: -.01em; }
+.powered { font-size: 13px; color: var(--muted); border: 1px solid var(--line); padding: 5px 12px; border-radius: 999px; background: var(--surface); }
+h1 { font: 700 clamp(36px, 6.4vw, 66px)/1.02 Fraunces, Georgia, serif; letter-spacing: -.025em; margin: 30px 0 16px; max-width: 15ch; }
+h1 em { font-style: italic; font-weight: 600; color: var(--accent); }
+.lede { font-size: 18px; color: var(--muted); max-width: 60ch; margin: 0 0 28px; }
+h2 { font: 600 28px/1.2 Fraunces, Georgia, serif; margin: 0 0 6px; letter-spacing: -.01em; }
 h3 { font: 600 12px/1 Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
-form.ask { padding: 20px; display: grid; grid-template-columns: 1fr 1fr auto; gap: 14px; align-items: end; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
+form.ask { padding: 22px; display: grid; grid-template-columns: 1fr 1fr auto; gap: 14px; align-items: end; }
 form.ask .wide { grid-column: 1 / -1; }
-.optional { font-weight: 400; color: var(--muted); }
-.resolved { font-size: 13px; color: var(--muted); margin-top: 2px; }
-.diff { padding: 22px 26px; margin-bottom: 20px; }
-.diff table { width: 100%; border-collapse: collapse; }
-.diff th { text-align: left; font: 600 15px Fraunces, serif; padding: 0 12px 10px 0; width: 44%; }
-.diff th:first-child, .diff td:first-child { width: 12%; }
-.diff td { vertical-align: top; padding: 10px 12px 10px 0; border-top: 1px solid var(--line); }
-.diff td:first-child { font: 600 12px/1.9 Inter; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-.elsewhere { padding: 18px 20px; margin-top: 20px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
-.ghost { background: var(--ink); color: var(--bg); padding: 13px 20px; }
-.ghost[disabled] { opacity: .55; cursor: progress; }
 label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-input, textarea { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; resize: none; }
-input:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-button { font: 600 15px Inter, sans-serif; cursor: pointer; border: 0; border-radius: 10px; }
-.go { background: var(--accent); color: var(--accent-ink); padding: 13px 22px; white-space: nowrap; }
-.go[disabled] { opacity: .55; cursor: progress; }
+.optional { font-weight: 400; color: var(--muted); }
+input, textarea { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; resize: none; transition: border-color .15s; }
+input:hover, textarea:hover { border-color: var(--muted); }
+input:focus, textarea:focus, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { font: 600 15px Inter, sans-serif; cursor: pointer; border: 0; border-radius: 12px; transition: transform .12s, filter .12s; }
+button:hover:not([disabled]) { transform: translateY(-1px); filter: brightness(1.06); }
+.go { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink); padding: 13px 24px; white-space: nowrap; }
+.dark-btn { background: var(--ink); color: var(--bg); padding: 12px 18px; white-space: nowrap; }
+.soft-btn { background: transparent; border: 1px solid var(--line); color: var(--ink); padding: 11px 16px; font-size: 14px; }
+button[disabled] { opacity: .55; cursor: progress; }
 .examples { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0 0; font-size: 14px; color: var(--muted); }
-.examples button { background: transparent; border: 1px solid var(--line); color: var(--ink); padding: 7px 12px; border-radius: 999px; font-weight: 500; font-size: 13px; }
+.examples button { background: var(--surface); border: 1px solid var(--line); color: var(--ink); padding: 7px 13px; border-radius: 999px; font-weight: 500; font-size: 13px; }
 .examples button:hover { border-color: var(--accent); }
-section { margin: 44px 0; }
+section { margin: 48px 0; }
 .sub { color: var(--muted); margin: 0 0 18px; }
-ol.steps { list-style: none; margin: 0; padding: 6px 20px; }
-ol.steps li { display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); animation: rise .35s ease both; }
+ol.steps { list-style: none; margin: 0; padding: 8px 22px; }
+ol.steps li { display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); animation: rise .35s ease both; position: relative; }
 ol.steps li:last-child { border-bottom: 0; }
 .num { width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: var(--bg); font: 600 12px/26px Inter; text-align: center; }
+li.special .num { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink); }
 .step-title { font-weight: 600; }
-.status { padding: 14px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; gap: 10px; align-items: center; }
-.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+.resolved { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.resolved.doubt { color: var(--warn); font-weight: 500; }
+.status { padding: 14px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; gap: 10px; align-items: center; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); animation: pulse 1s ease-in-out infinite; flex: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chip { font-size: 12.5px; font-weight: 500; padding: 3px 9px; border-radius: 999px; background: var(--detail); color: var(--detail-ink); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .chip.venue { background: var(--venue); color: var(--venue-ink); }
@@ -78,45 +82,82 @@ ol.steps li:last-child { border-bottom: 0; }
 .chip.brand { background: var(--brand); color: var(--brand-ink); }
 .chip.movie, .chip.tv_show { background: var(--screen); color: var(--screen-ink); }
 .chip.genre { background: var(--genre); color: var(--genre-ink); }
+.chip.twin_venue, .chip.twin { background: var(--twin); color: var(--twin-ink); }
 .chip.unverified { background: transparent; color: var(--muted); border: 1px dashed var(--muted); }
-.statbar { display: flex; flex-wrap: wrap; gap: 10px 26px; padding: 16px 20px; margin-bottom: 16px; font-size: 14px; color: var(--muted); }
-.statbar b { font: 700 22px/1 Fraunces, serif; color: var(--ink); margin-right: 6px; }
-.tabs { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px; margin-bottom: 18px; }
-.tabs button { background: transparent; color: var(--muted); padding: 8px 14px; font-size: 14px; }
+.statbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-bottom: 18px; overflow: hidden; }
+.stat { padding: 16px 20px; border-right: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
+.stat:last-child { border-right: 0; }
+.stat b { display: block; font: 700 30px/1.1 Fraunces, serif; color: var(--ink); }
+.tabs { display: inline-flex; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 4px; margin-bottom: 18px; }
+.tabs button { background: transparent; color: var(--muted); padding: 8px 14px; font-size: 14px; border-radius: 10px; }
 .tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
 .cols { display: grid; gap: 20px; }
 .cols.two { grid-template-columns: 1fr 1fr; }
-.brief { padding: 26px; }
+.brief { padding: 28px; min-width: 0; }
 .brief.plain { border-style: dashed; box-shadow: none; }
 .tag { display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; margin-bottom: 14px; background: var(--brand); color: var(--brand-ink); }
 .brief.plain .tag { background: var(--detail); color: var(--detail-ink); }
-.position { font: 400 22px/1.4 Fraunces, Georgia, serif; margin: 0 0 14px; }
+.position { font: 400 23px/1.4 Fraunces, Georgia, serif; margin: 0 0 14px; }
 .area { color: var(--muted); margin: 0 0 26px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-bottom: 28px; }
-.mini { border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 28px; }
+.mini { border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: var(--surface); }
 .mini strong { display: block; margin-bottom: 2px; }
 .meta { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
 .mini p { margin: 0; font-size: 14px; }
+.map { height: 260px; border-radius: 14px; border: 1px solid var(--line); margin-bottom: 14px; z-index: 0; background: var(--detail); }
+.map.world { height: 340px; }
 .rec { border-top: 1px solid var(--line); padding: 16px 0; display: grid; grid-template-columns: 92px 1fr; gap: 14px; }
 .rec .where { font: 600 12px/1.6 Inter; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.rec.borrow { background: linear-gradient(90deg, var(--twin), transparent 70%); margin: 0 -14px; padding: 16px 14px; border-radius: 12px; border-top: 0; }
 .rec p { margin: 0 0 4px; }
 .rec .why { color: var(--muted); font-size: 14px; }
 .risk { border-left: 3px solid var(--warn); padding: 4px 0 4px 14px; margin: 0 0 14px; }
 .risk p { margin: 0; }
 .note { font-size: 13px; color: var(--muted); margin-top: 18px; }
 .error { padding: 16px 20px; color: var(--warn); }
+.twins { padding: 28px; }
+.twins .intro { max-width: 68ch; color: var(--muted); margin: 0 0 18px; }
+.twin-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 16px 0 26px; }
+.twin-card { border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.twin-card:first-child { border-color: var(--accent); background: linear-gradient(160deg, var(--twin), transparent 75%); }
+.twin-card .rank { font: 600 11px Inter; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.twin-card strong { display: block; font: 600 18px/1.25 Fraunces, serif; margin: 2px 0 10px; }
+.meter { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); width: 0; transition: width .9s cubic-bezier(.2, .8, .2, 1); }
+.twin-card .pct { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.diff { padding: 22px 26px; margin-bottom: 20px; }
+.diff table { width: 100%; border-collapse: collapse; }
+.diff th { text-align: left; font: 600 16px Fraunces, serif; padding: 0 12px 10px 0; width: 44%; }
+.diff th:first-child, .diff td:first-child { width: 12%; }
+.diff td { vertical-align: top; padding: 10px 12px 10px 0; border-top: 1px solid var(--line); }
+.diff td:first-child { font: 600 12px/1.9 Inter; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.next { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+.next form { padding: 18px 20px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
 footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13px; color: var(--muted); }
-.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 [hidden] { display: none !important; }
-@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 @keyframes pulse { 50% { opacity: .25; } }
-@media (max-width: 820px) {
-  form.ask, .cols.two, .elsewhere { grid-template-columns: 1fr; }
-  .diff { padding: 18px; overflow-x: auto; }
+@media (max-width: 860px) {
+  form.ask, .cols.two, .next, .next form { grid-template-columns: 1fr; }
+  .statbar { grid-template-columns: 1fr 1fr; }
+  .stat:nth-child(2) { border-right: 0; }
+  .stat:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .rec { grid-template-columns: 1fr; gap: 4px; }
-  .brief { padding: 20px; }
+  .brief, .twins { padding: 20px; }
+  .diff { padding: 18px; overflow-x: auto; }
+  .powered { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; scroll-behavior: auto; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+@media print {
+  body { background: #fff; color: #000; }
+  body::before, header.top .powered, form.ask, .examples, #work, .tabs, .next, .actions, .map, footer, h1, .lede, .brief.plain { display: none !important; }
+  .card { box-shadow: none; border-color: #ccc; }
+  section { margin: 16px 0; }
+  .rec, .mini, .twin-card, .risk { break-inside: avoid; }
+  .cols.two { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
@@ -127,13 +168,13 @@ footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13p
   </header>
 
   <main>
-    <h1>Know the neighbourhood before you sign the lease.</h1>
-    <p class="lede">Describe what you want to open and where. An agent reads the area's taste in music, brands, film and food, studies who you'd compete with, and writes a launch brief where every idea points to the data behind it.</p>
+    <h1>Know the neighbourhood <em>before</em> you sign the lease.</h1>
+    <p class="lede">Describe what you want to open and where. An agent reads the area's taste in music, brands, film and food, studies who you'd compete with, finds the neighbourhoods around the world that share its taste, and writes a launch brief where every idea points to the data behind it.</p>
 
     <form class="ask card" id="ask">
       <div class="wide">
         <label for="concept">What are you opening?</label>
-        <textarea id="concept" rows="2" maxlength="300" required placeholder="A specialty coffee shop and vinyl listening room"></textarea>
+        <textarea id="concept" rows="2" maxlength="240" required placeholder="A specialty coffee shop and vinyl listening room"></textarea>
       </div>
       <div>
         <label for="location">Where?</label>
@@ -163,36 +204,54 @@ footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13p
       <div class="tabs" role="tablist">
         <button role="tab" data-view="qloo" aria-selected="true">With Qloo</button>
         <button role="tab" data-view="both" aria-selected="false">Side by side</button>
-        <button role="tab" data-view="plain" aria-selected="false">Same model, no Qloo</button>
-        <button role="tab" data-view="areas" aria-selected="false" id="areas-tab" hidden>Two neighbourhoods</button>
+        <button role="tab" data-view="plain" aria-selected="false">No Qloo</button>
+        <button role="tab" data-view="pair" aria-selected="false" id="pair-tab" hidden>Compare</button>
       </div>
       <div id="diff"></div>
       <div class="cols" id="briefs"></div>
+      <div id="twins"></div>
       <div class="legend" id="legend"></div>
-      <form class="card elsewhere" id="elsewhere">
-        <div>
-          <label for="other">Would the same idea land differently somewhere else?</label>
-          <input id="other" maxlength="80" required placeholder="Another neighbourhood, City">
-        </div>
-        <button class="ghost" id="other-go">Compare neighbourhoods</button>
-      </form>
+      <div class="actions">
+        <button class="soft-btn" id="print" type="button">Print or save as PDF</button>
+        <button class="soft-btn" id="copy" type="button">Copy link to this brief</button>
+      </div>
+      <div class="next">
+        <form class="card" id="refine">
+          <div>
+            <label for="tweak">Change something and see what moves</label>
+            <input id="tweak" maxlength="50" required placeholder="Make it premium and evenings only">
+          </div>
+          <button class="dark-btn" id="tweak-go">Re-run</button>
+        </form>
+        <form class="card" id="elsewhere">
+          <div>
+            <label for="other">Would it land differently somewhere else?</label>
+            <input id="other" maxlength="80" required placeholder="Another neighbourhood, City">
+          </div>
+          <button class="dark-btn" id="other-go">Compare</button>
+        </form>
+      </div>
     </section>
   </main>
 
   <footer>
-    LocalTaste derives a neighbourhood's taste from the audiences of its venues, using Qloo's hackathon API. It describes who an area is and what they favour. It does not predict whether a business will succeed.
+    LocalTaste derives a neighbourhood's taste from the audiences of its venues, using Qloo's hackathon API. It describes who an area is and what they favour. It does not predict whether a business will succeed. Map tiles © OpenStreetMap contributors.
   </footer>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const KIND_LABEL = { venue: "Venue", artist: "Artist", brand: "Brand", movie: "Film", tv_show: "TV", genre: "Music genre", food: "Food", ambience: "Feel" };
-let current = null, other = null, source = null;
+const KIND_LABEL = { venue: "Venue", artist: "Artist", brand: "Brand", movie: "Film", tv_show: "TV", genre: "Music genre", food: "Food", ambience: "Feel", twin_venue: "From a taste twin" };
+const AREA_LABEL = { borrow: "Borrow" };
+let current = null, other = null, pairMode = "areas", source = null, maps = [];
+const params = () => new URLSearchParams(window.location.search);
+const busy = (on) => ["go", "other-go", "tweak-go"].forEach((id) => { $(id).disabled = on; });
 
 function chip(name, kinds, strict) {
   const kind = kinds[String(name).toLowerCase()];
-  if (!kind && strict) return `<span class="chip unverified" title="Not found in Qloo's data for this run">${esc(name)}</span>`;
+  if (!kind && strict) return `<span class="chip unverified" title="Not in what Qloo returned for this run">${esc(name)}</span>`;
   return `<span class="chip ${kind || ""}" title="${esc(KIND_LABEL[kind] || "")}">${esc(name)}</span>`;
 }
 
@@ -206,29 +265,77 @@ function venueMeta(v) {
   return bits.join(" · ");
 }
 
-function renderBrief(b, data, grounded) {
-  const kinds = data.kinds, order = ["menu", "music", "decor", "partners", "pricing", "events"];
+function renderBrief(b, data, grounded, label, mapId) {
+  const kinds = data.kinds, order = ["menu", "music", "decor", "partners", "pricing", "events", "borrow"];
   const recs = [...(b.recommendations || [])].sort((x, y) => (order.indexOf(x.area) + 99) % 99 - (order.indexOf(y.area) + 99) % 99);
   const comps = (b.competitors || []).map((c) => {
     const v = data.venues[String(c.name).toLowerCase()];
-    const meta = grounded ? venueMeta(v) : (v ? venueMeta(v) : "not found in Qloo's data for this run");
+    const meta = v ? venueMeta(v) : "not in what Qloo returned for this run";
     return `<div class="mini"><strong>${esc(c.name)}</strong><div class="meta">${esc(meta)}</div><p>${esc(c.takeaway)}</p></div>`;
   }).join("");
   const recHtml = recs.map((r) => `
-    <div class="rec"><div class="where">${esc(r.area)}</div><div>
+    <div class="rec ${r.area === "borrow" ? "borrow" : ""}"><div class="where">${esc(AREA_LABEL[r.area] || r.area)}</div><div>
       <p>${esc(r.idea)}</p><p class="why">${esc(r.why)}</p>
       <div class="chips">${(r.signals || []).map((s) => chip(s, kinds, true)).join("")}</div>
     </div></div>`).join("");
   const risks = (b.risks || []).map((r) => `<div class="risk"><p>${esc(r.risk)}</p><div class="chips">${(r.signals || []).map((s) => chip(s, kinds, true)).join("")}</div></div>`).join("");
+  const plainTag = data.same_model === false ? "A language model, no Qloo" : "Same model, no Qloo";
   return `<article class="card brief ${grounded ? "" : "plain"}">
-    <span class="tag">${grounded ? "Grounded in Qloo" : (data.same_model === false ? "A language model, no Qloo" : "Same model, no Qloo")}</span>
+    <span class="tag">${esc(label || (grounded ? "Grounded in Qloo" : plainTag))}</span>
     <p class="position">${esc(b.positioning)}</p>
     <p class="area">${esc(b.area_read)}</p>
-    <h3>Who you're up against</h3><div class="grid">${comps}</div>
+    <h3>Who you're up against</h3>
+    ${grounded && mapId ? `<div class="map" id="${mapId}"></div>` : ""}
+    <div class="grid">${comps}</div>
     <h3>What to do</h3>${recHtml}
     <h3 style="margin-top:26px">What could go wrong</h3>${risks}
-    ${grounded ? "" : `<p class="note">Dashed names came from the model's memory and do not appear in Qloo's data for this run. They may be real, out of date or invented.</p>`}
+    ${grounded ? "" : `<p class="note">Dashed names came from the model's memory and are not in what Qloo returned for this run. They may be real, out of date or invented.</p>`}
   </article>`;
+}
+
+function renderTwins(data) {
+  const t = data.twins;
+  if (!t || !t.twins || !t.twins.length) return "";
+  const cards = t.twins.map((x, i) => `<div class="twin-card"><div class="rank">${i ? `Twin ${i + 1}` : "Closest taste twin"}</div>
+    <strong>${esc(x.name)}</strong><div class="meter"><i data-w="${x.match}"></i></div><div class="pct">${x.match} out of 100</div></div>`).join("");
+  const b = data.borrow;
+  const borrow = b && b.venues.length ? `<h3>What this crowd would love most in ${esc(b.from)}</h3><div class="grid" style="margin-bottom:0">${b.venues.map((v) => `
+    <div class="mini"><strong>${esc(v.name)}</strong><div class="meta">${esc([v.category, `affinity ${Math.round(v.affinity * 100)}`, v.rating ? `★ ${Number(v.rating).toFixed(1)}` : ""].filter(Boolean).join(" · "))}</div>
+    <div class="chips">${[...v.known_for.slice(0, 3), ...v.feel.slice(0, 2)].map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div></div>`).join("")}</div>` : "";
+  return `<section class="card twins" style="margin:20px 0 0"><h2>Taste twins</h2>
+    <p class="intro">Qloo was asked where in the world the crowd of ${esc(data.location)} would feel most at home, using this area's venues as the taste signal across ${t.compared} well-known neighbourhoods in other cities. The least alike was ${esc(t.least_alike.name)} at ${t.least_alike.match}.</p>
+    <div class="map world" id="world-map"></div>
+    <div class="twin-list">${cards}</div>${borrow}</section>`;
+}
+
+function drawMaps(data, rivalsId) {
+  maps.forEach((m) => m.remove());
+  maps = [];
+  if (!window.L) return;
+  const tiles = () => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap" });
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  const rivals = (data.brief.competitors || []).map((c) => ({ name: c.name, ...(data.venues[c.name.toLowerCase()] || {}) })).filter((v) => v.lat && v.lon);
+  if ($(rivalsId) && rivals.length) {
+    const m = L.map(rivalsId, { scrollWheelZoom: false, attributionControl: true });
+    tiles().addTo(m);
+    rivals.forEach((v) => L.circleMarker([v.lat, v.lon], { radius: 9, color: accent, weight: 2, fillColor: accent, fillOpacity: .55 }).addTo(m).bindTooltip(esc(v.name), { permanent: rivals.length <= 5, direction: "top", offset: [0, -8] }));
+    m.fitBounds(L.latLngBounds(rivals.map((v) => [v.lat, v.lon])).pad(.35), { maxZoom: 15 });
+    maps.push(m);
+  } else if ($(rivalsId)) { $(rivalsId).hidden = true; }
+  if ($("world-map") && data.twins && data.centre) {
+    const w = L.map("world-map", { scrollWheelZoom: false, worldCopyJump: true, minZoom: 1 });
+    tiles().addTo(w);
+    const home = data.centre, pts = [home];
+    data.twins.twins.forEach((t, i) => {
+      L.polyline([home, [t.lat, t.lon]], { color: accent, weight: i ? 1.5 : 3, opacity: i ? .45 : .9, dashArray: i ? "4 6" : null }).addTo(w);
+      L.circleMarker([t.lat, t.lon], { radius: 6 + (t.match - 50) / 6, color: accent, weight: 2, fillColor: accent, fillOpacity: .5 }).addTo(w).bindTooltip(`${esc(t.name)} · ${t.match}`, { permanent: i === 0, direction: "top", offset: [0, -8] });
+      pts.push([t.lat, t.lon]);
+    });
+    L.circleMarker(home, { radius: 9, color: "#1d1a16", weight: 3, fillColor: "#fff", fillOpacity: 1 }).addTo(w).bindTooltip(esc(data.location), { permanent: true, direction: "bottom", offset: [0, 8] });
+    w.fitBounds(L.latLngBounds(pts).pad(.3), { maxZoom: 5 });
+    maps.push(w);
+  }
+  requestAnimationFrame(() => document.querySelectorAll(".meter i").forEach((i) => { i.style.width = `${i.dataset.w}%`; }));
 }
 
 function cites(data, wanted) {
@@ -236,124 +343,143 @@ function cites(data, wanted) {
   return [...new Set(names)].filter((n) => wanted.includes(data.kinds[n.toLowerCase()]));
 }
 
-function renderDiff(a, b) {
-  const rows = [["Music", ["artist", "genre"]], ["Brands", ["brand"]], ["Food", ["food"]], ["Feel", ["ambience"]], ["Screen", ["movie", "tv_show"]]];
+function renderDiff(a, b, la, lb, heading) {
+  const rows = [["Music", ["artist", "genre"]], ["Brands", ["brand"]], ["Food", ["food"]], ["Feel", ["ambience"]], ["Screen", ["movie", "tv_show"]], ["Borrowed", ["twin_venue"]]];
   const rivals = (d) => (d.brief.competitors || []).map((c) => c.name);
+  const price = (d) => { const p = (d.brief.recommendations || []).find((r) => r.area === "pricing"); return p ? esc(p.idea) : "—"; };
   const cell = (d, list) => `<div class="chips">${list.map((n) => chip(n, d.kinds, false)).join("") || `<span class="chip unverified">nothing cited</span>`}</div>`;
   const body = rows.map(([label, kinds]) => [label, cites(a, kinds), cites(b, kinds)]).filter((r) => r[1].length || r[2].length)
     .map(([label, x, y]) => `<tr><td>${label}</td><td>${cell(a, x)}</td><td>${cell(b, y)}</td></tr>`).join("");
-  return `<div class="card diff"><h3>What Qloo says is different</h3><table>
-    <tr><th></th><th>${esc(a.location)}</th><th>${esc(b.location)}</th></tr>${body}
-    <tr><td>Rivals</td><td>${cell(a, rivals(a))}</td><td>${cell(b, rivals(b))}</td></tr></table></div>`;
+  return `<div class="card diff"><h3>${esc(heading)}</h3><table>
+    <tr><th></th><th>${esc(la)}</th><th>${esc(lb)}</th></tr>${body}
+    <tr><td>Rivals</td><td>${cell(a, rivals(a))}</td><td>${cell(b, rivals(b))}</td></tr>
+    <tr><td>Pricing</td><td>${price(a)}</td><td>${price(b)}</td></tr></table></div>`;
 }
 
 function show(view) {
   if (!current) return;
-  view = ["qloo", "both", "plain"].includes(view) || (view === "areas" && other) ? view : "qloo";
+  view = ["qloo", "both", "plain"].includes(view) || (view === "pair" && other) ? view : "qloo";
+  document.querySelectorAll(".tabs button").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
   $("diff").innerHTML = "";
-  if (view === "areas") {
-    document.querySelectorAll(".tabs button").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
-    $("diff").innerHTML = renderDiff(current, other);
+  $("twins").innerHTML = "";
+  if (view === "pair") {
+    const areas = pairMode === "areas";
+    const la = areas ? current.location : "Before", lb = areas ? other.location : `After: ${other.tweak || "changed"}`;
+    $("diff").innerHTML = renderDiff(current, other, la, lb, areas ? "What Qloo says is different" : "What moved when you changed it");
     $("briefs").className = "cols two";
-    $("briefs").innerHTML = [current, other].map((d) => renderBrief(d.brief, d, true).replace("Grounded in Qloo", esc(d.location))).join("");
+    $("briefs").innerHTML = renderBrief(current.brief, current, true, la) + renderBrief(other.brief, other, true, lb);
+    drawMaps(current, "none");
     return;
   }
-  document.querySelectorAll(".tabs button").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
   const hasPlain = current.plain && current.plain.positioning;
   const parts = [];
-  if (view !== "plain") parts.push(renderBrief(current.brief, current, true));
+  if (view !== "plain") parts.push(renderBrief(current.brief, current, true, null, "rivals-map"));
   if (view !== "qloo") parts.push(hasPlain ? renderBrief(current.plain, current, false) : `<div class="card error">The comparison brief is not available for this run.</div>`);
   $("briefs").className = "cols" + (view === "both" ? " two" : "");
   $("briefs").innerHTML = parts.join("");
+  if (view !== "plain") $("twins").innerHTML = renderTwins(current);
+  drawMaps(current, "rivals-map");
 }
 
-function finish(data, compare) {
-  if (compare) {
+function countUp(el, to) {
+  const start = performance.now(), dur = 700;
+  const tick = (now) => { const p = Math.min(1, (now - start) / dur); el.textContent = Math.round(to * (1 - Math.pow(1 - p, 3))); if (p < 1) requestAnimationFrame(tick); };
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) el.textContent = to; else requestAnimationFrame(tick);
+}
+
+function finish(data, mode) {
+  $("status").hidden = true;
+  $("result").hidden = false;
+  if (mode) {
     other = data;
-    const link = new URLSearchParams(window.location.search);
-    link.set("vs", data.location);
-    history.replaceState(null, "", `?${link}`);
-    $("status").hidden = true;
-    $("areas-tab").hidden = false;
-    $("result").hidden = false;
-    show("areas");
+    pairMode = mode;
+    $("pair-tab").hidden = false;
+    $("pair-tab").textContent = mode === "areas" ? "Two neighbourhoods" : "Before and after";
+    if (mode === "areas") { const link = params(); link.set("vs", data.location); history.replaceState(null, "", `?${link}`); }
+    show("pair");
     $("result").scrollIntoView({ block: "start" });
     return;
   }
   current = data;
   other = null;
-  $("areas-tab").hidden = true;
-  const plainNames = [...(data.plain.recommendations || []), ...(data.plain.risks || [])].flatMap((r) => r.signals || []);
-  const matched = plainNames.filter((n) => data.kinds[String(n).toLowerCase()]).length;
-  $("status").hidden = true;
-  $("result-title").textContent = `${data.concept}`;
-  $("result-sub").textContent = data.location;
+  $("pair-tab").hidden = true;
+  const pr = data.plain_rivals || { found: 0, total: 0 };
+  const twin = data.twins && data.twins.twins[0];
+  $("result-title").textContent = data.concept;
+  $("result-sub").textContent = data.location + (data.inspirations ? ` · admires ${data.inspirations}` : "");
   $("stats").innerHTML = `
-    <span><b>${data.stats.qloo_calls}</b>questions asked of Qloo</span>
-    <span><b>${data.stats.signals}</b>taste signals cited, all traced to Qloo</span>
-    <span><b>${matched}/${plainNames.length}</b>names cited without Qloo that match anything Qloo returned</span>`;
+    <div class="stat"><b data-n="${data.stats.qloo_calls}">0</b>questions asked of Qloo</div>
+    <div class="stat"><b data-n="${data.stats.signals}">0</b>taste signals cited, all traced to Qloo</div>
+    <div class="stat"><b>${pr.found}/${pr.total}</b>rivals named without Qloo that Qloo lists in this city</div>
+    <div class="stat"><b>${twin ? esc(twin.name.split(",")[0]) : "—"}</b>${twin ? `closest taste twin, ${esc(twin.name.split(",").slice(1).join(",").trim())}` : "no taste twin found"}</div>`;
+  document.querySelectorAll("#stats b[data-n]").forEach((b) => countUp(b, Number(b.dataset.n)));
   $("legend").innerHTML = Object.entries(KIND_LABEL).map(([k, l]) => `<span class="chip ${k}">${l}</span>`).join("");
-  $("result").hidden = false;
-  const params = new URLSearchParams(window.location.search);
-  show(params.get("view") || "qloo");
+  show(params().get("view") || "qloo");
   $("result").scrollIntoView({ block: "start" });
-  if (params.get("vs")) { $("other").value = params.get("vs"); start(data.concept, params.get("vs"), data.inspirations || "", true); }
+  if (params().get("vs")) { $("other").value = params().get("vs"); start(data.concept, params().get("vs"), data.inspirations || "", "areas"); }
 }
 
-function start(concept, location, admires = "", compare = false) {
+function start(concept, location, admires = "", mode = null, tweak = "") {
   if (source) source.close();
-  if (!compare) current = null;
-  $("go").disabled = $("other-go").disabled = true;
+  if (!mode) current = null;
+  busy(true);
   $("steps").innerHTML = "";
   $("result").hidden = true;
   $("work").hidden = false;
   $("status").hidden = false;
   $("status").innerHTML = `<span class="dot"></span><span id="status-text">Planning the research…</span>`;
   $("work").scrollIntoView({ block: "start" });
-  const view = new URLSearchParams(window.location.search).get("view");
   const q = `concept=${encodeURIComponent(concept)}&location=${encodeURIComponent(location)}${admires ? `&inspirations=${encodeURIComponent(admires)}` : ""}`;
-  const vs = new URLSearchParams(window.location.search).get("vs");
-  if (!compare) history.replaceState(null, "", `?${q}${view ? `&view=${view}` : ""}${vs && !current ? `&vs=${encodeURIComponent(vs)}` : ""}`);
+  const keep = params();
+  if (!mode) history.replaceState(null, "", `?${q}${keep.get("view") ? `&view=${keep.get("view")}` : ""}${keep.get("vs") && !current ? `&vs=${encodeURIComponent(keep.get("vs"))}` : ""}`);
   const mine = new EventSource(`/api/run?${q}`);
   source = mine;
-  const done = () => { mine.close(); if (source === mine) $("go").disabled = $("other-go").disabled = false; };
-  source.addEventListener("start", (e) => {
+  const done = () => { mine.close(); if (source === mine) busy(false); };
+  mine.addEventListener("start", (e) => {
     $("work-sub").textContent = JSON.parse(e.data).saved
       ? "Replaying a saved run. Each line is a question the agent chose to ask Qloo."
       : "Live run. Each line is a question the agent chose to ask Qloo.";
   });
-  source.addEventListener("step", (e) => {
+  mine.addEventListener("step", (e) => {
     const s = JSON.parse(e.data), li = document.createElement("li");
+    if (s.tool === "taste_twins" || s.tool === "borrow_from") li.className = "special";
+    const empty = s.failed || !s.names.length;
     li.innerHTML = `<span class="num">${$("steps").children.length + 1}</span><div>
       <div class="step-title">${esc(s.title)}</div>
-      ${s.resolved_as ? `<div class="resolved">Qloo reads this as ${esc(s.resolved_as)}</div>` : ""}
-      <div class="chips">${s.failed || !s.names.length ? `<span class="chip unverified">nothing found, trying another way</span>` : s.names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div></div>`;
+      ${s.resolved_as ? `<div class="resolved ${s.doubtful ? "doubt" : ""}">${s.doubtful ? "Check this is the place you meant. " : ""}Qloo reads this as ${esc(s.resolved_as)}</div>` : ""}
+      <div class="chips">${empty ? `<span class="chip unverified">nothing found, trying another way</span>` : s.names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div></div>`;
     $("steps").appendChild(li);
     $("status-text").textContent = "Researching…";
   });
-  source.addEventListener("waiting", (e) => {
+  mine.addEventListener("waiting", (e) => {
     $("status-text").textContent = `The free model tier this demo runs on is rate limited. Resuming in about ${JSON.parse(e.data).seconds} seconds…`;
   });
-  source.addEventListener("writing", () => { $("status-text").textContent = "Writing the brief from what Qloo returned…"; });
-  source.addEventListener("result", (e) => { done(); finish(JSON.parse(e.data), compare); });
-  source.addEventListener("error", (e) => {
+  mine.addEventListener("writing", () => { $("status-text").textContent = "Writing the brief from what Qloo returned…"; });
+  mine.addEventListener("result", (e) => { done(); const d = JSON.parse(e.data); d.tweak = tweak; finish(d, mode); });
+  mine.addEventListener("error", (e) => {
     const msg = e.data ? JSON.parse(e.data).message : "The connection dropped before the brief was finished. Please try again.";
     $("status").innerHTML = `<span class="error" style="padding:0">${esc(msg)}</span>`;
     done();
+    if (mode && current) { $("result").hidden = false; }
   });
 }
 
-$("ask").addEventListener("submit", (e) => {
+$("ask").addEventListener("submit", (e) => { e.preventDefault(); start($("concept").value.trim(), $("location").value.trim(), $("admires").value.trim()); });
+$("elsewhere").addEventListener("submit", (e) => { e.preventDefault(); if (current) start(current.concept, $("other").value.trim(), current.inspirations || "", "areas"); });
+$("refine").addEventListener("submit", (e) => {
   e.preventDefault();
-  start($("concept").value.trim(), $("location").value.trim(), $("admires").value.trim());
+  const tweak = $("tweak").value.trim();
+  if (current) start(`${current.concept}. Change: ${tweak}`, current.location, current.inspirations || "", "versions", tweak);
 });
-$("elsewhere").addEventListener("submit", (e) => {
-  e.preventDefault();
-  if (current) start(current.concept, $("other").value.trim(), current.inspirations || "", true);
+$("print").addEventListener("click", () => window.print());
+$("copy").addEventListener("click", () => {
+  const done = () => { $("copy").textContent = "Link copied"; setTimeout(() => { $("copy").textContent = "Copy link to this brief"; }, 1800); };
+  if (navigator.clipboard) navigator.clipboard.writeText(window.location.href).then(done, () => window.prompt("Copy this link", window.location.href));
+  else window.prompt("Copy this link", window.location.href);
 });
 document.querySelectorAll(".tabs button").forEach((t) => t.addEventListener("click", () => show(t.dataset.view)));
 
-const shared = new URLSearchParams(location.search);
+const shared = params();
 if (shared.get("concept") && shared.get("location")) {
   $("concept").value = shared.get("concept");
   $("location").value = shared.get("location");

@@ -4,14 +4,17 @@ The model plans its own Qloo queries through tools. Everything the tools return 
 in a ledger, which feeds the final brief and lets us check that cited signals are real.
 """
 import json
+import statistics
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import qloo
 from llm import RESEARCH_MODEL, chat, chat_json
 from qloo import _get, _insights
 
 DOMAINS = ["artist", "brand", "movie", "tv_show"]
+ATLAS = json.loads(Path(__file__).with_name("atlas.json").read_text())
 MAX_STEPS = 6
 MIN_CALLS, MAX_CALLS = 4, 8
 MIN_RECS = 5
@@ -30,6 +33,10 @@ def find_tags(query, take=8):
 TAG_GROUPS = {"music_genres": "urn:tag:genre:music", "food_scene": "urn:tag:genre:place", "ambience": "urn:tag:ambience:qloo"}
 
 
+class ThinBrief(RuntimeError):
+    """Raised when too few recommendations survive verification to be worth showing."""
+
+
 class UnknownPlace(ValueError):
     """Raised when Qloo cannot place the location or has no venues there."""
 
@@ -46,8 +53,11 @@ def area_taste(location):
     jobs.update({k: (qloo.tags_from, ids, 8, t) for k, t in TAG_GROUPS.items()})
     with ThreadPoolExecutor(3) as pool:
         got = {k: f.result() for k, f in {k: pool.submit(*j) for k, j in jobs.items()}.items()}
+    spots = [(v["lat"], v["lon"]) for v in venues if v["lat"] is not None]
     return {
         "resolved_as": resolved,
+        "in_named_city": qloo.same_city(location, resolved),
+        "centre": [statistics.median(p[0] for p in spots), statistics.median(p[1] for p in spots)] if spots else None,
         "popular_venues": _names(venues, 8),
         "local_venue_artists": _names(got["artist"]),
         "city_artists": _names(got["city_artists"]),
@@ -86,10 +96,61 @@ def competitors(location, kinds):
                 p = e.get("properties", {})
                 tags = [t for t in e.get("tags", []) if t.get("name")]
                 pick = lambda types: [t["name"] for t in tags if any(f":{d}:" in t.get("id", "") for d in types)][:5]
-                out.append({"id": e["entity_id"], "name": e["name"], "category": kind,
-                            "popularity": round(e.get("popularity") or 0, 2), "rating": p.get("business_rating"),
-                            "price_level": p.get("price_level"), "known_for": pick(FOOD_TAGS), "feel": pick(FEEL_TAGS)})
+                out.append(_venue(e, kind))
     return sorted(out, key=lambda v: -v["popularity"])[:12]
+
+
+def _venue(e, kind):
+    p = e.get("properties", {})
+    tags = [t for t in e.get("tags", []) if t.get("name")]
+
+    def pick(types):
+        return [t["name"] for t in tags if any(f":{d}:" in t.get("id", "") for d in types)][:5]
+
+    return {"id": e["entity_id"], "name": e["name"], "category": kind, "popularity": round(e.get("popularity") or 0, 2),
+            "rating": p.get("business_rating"), "price_level": p.get("price_level"), "known_for": pick(FOOD_TAGS),
+            "feel": pick(FEEL_TAGS), "lat": (e.get("location") or {}).get("lat"), "lon": (e.get("location") or {}).get("lon")}
+
+
+def _city(location):
+    city = qloo._plain(location.split(",")[-1].strip())
+    return qloo.CITY_ALIASES.get(city, city)
+
+
+def taste_twins(location, top=4):
+    """Neighbourhoods in other cities where this area's audience would feel most at home.
+
+    This area's venues are used as taste signals; each atlas area is scored by the mean affinity of its
+    ten best-matching venues.
+    """
+    ids = [v["id"] for v in qloo.places(location, take=8)]
+    others = [a for a in ATLAS if _city(a["name"]) != _city(location)]
+
+    def score(area):
+        ents = _insights(**{"filter.type": "urn:entity:place", "filter.location.query": area["name"],
+                            "signal.interests.entities": ",".join(ids), "take": 10}).get("entities", [])
+        affinities = [e["query"]["affinity"] for e in ents if e.get("query", {}).get("affinity") is not None]
+        return {"name": area["name"], "match": round(100 * statistics.mean(affinities)) if affinities else 0,
+                "lat": area["lat"], "lon": area["lon"]}
+
+    with ThreadPoolExecutor(3) as pool:
+        scored = sorted(pool.map(score, others), key=lambda a: -a["match"])
+    return {"twins": scored[:top], "least_alike": scored[-1], "compared": len(scored)}
+
+
+def borrow_from(location, twin, kinds):
+    """Venues of the given kinds in the twin area, ranked by how strongly this area's audience would take to them."""
+    ids = [v["id"] for v in qloo.places(location, take=8)]
+    seen, out = set(), []
+    for kind in kinds[:2]:
+        for tag in _tags_for(kind)[:1]:
+            ents = _insights(**{"filter.type": "urn:entity:place", "filter.location.query": twin, "filter.tags": tag,
+                                "signal.interests.entities": ",".join(ids), "take": 5}).get("entities", [])
+            for e in ents:
+                if e["entity_id"] not in seen and e.get("name"):
+                    seen.add(e["entity_id"])
+                    out.append({**_venue(e, kind), "affinity": round(e.get("query", {}).get("affinity") or 0, 2)})
+    return sorted(out, key=lambda v: -v["affinity"])[:6]
 
 
 def lookup(name):
@@ -142,7 +203,7 @@ BRIEF_SCHEMA = (
     '{"positioning": "two sentences on how this concept should position itself here", '
     '"area_read": "two sentences on what this neighbourhood\'s audience is like", '
     '"competitors": [{"name": "", "takeaway": ""}], '
-    '"recommendations": [{"area": "menu|music|decor|partners|pricing|events", "idea": "", "why": "", "signals": ["exact names from the evidence"]}], '
+    '"recommendations": [{"area": "menu|music|decor|partners|pricing|events|borrow", "idea": "", "why": "", "signals": ["exact names from the evidence"]}], '
     '"risks": [{"risk": "", "signals": []}]}'
 )
 BRIEF = (
@@ -159,7 +220,10 @@ BRIEF = (
     "what they sell, that they are local). Write for a business owner in plain language; never mention data field "
     "names, tools or the word 'evidence'. Do not decorate ideas with unrelated "
     "names, and drop any idea the evidence does not support. Give 6-8 recommendations covering at least menu, music, decor and partners, and 3-4 "
-    "competitors. Be specific to this neighbourhood; avoid advice that would fit anywhere. Price tier is a 1-4 scale "
+    "competitors. If the evidence lists venues in a taste twin, add 2 recommendations with area \"borrow\": an idea taken "
+    "from one of those venues (what it serves or how it feels) and adapted to this neighbourhood, citing that venue; "
+    "these venues are abroad, so they are inspiration, never competitors or partners. "
+    "Be specific to this neighbourhood; avoid advice that would fit anywhere. Price tier is a 1-4 scale "
     "(1 cheap, 4 luxury), not a currency amount. Partners must be non-competing brands or venues, never direct "
     "competitors. Give 2-3 risks, each resting on evidence such as a strong competitor or a mismatch with the area's "
     "taste, with its signals. Reply as JSON: " + BRIEF_SCHEMA
@@ -170,10 +234,22 @@ GENERIC = (
 )
 
 
+def _twin_steps(location, ledger, record):
+    """After the model's research: find this area's taste twins and what could be borrowed from the closest one."""
+    found = taste_twins(location)
+    record("taste_twins", {"location": location}, found)
+    kinds = next((s["args"]["kinds"] for s in ledger if s["tool"] == "competitors" and isinstance(s["result"], list) and s["result"]), None)
+    if kinds and found["twins"]:
+        twin = found["twins"][0]["name"]
+        record("borrow_from", {"twin": twin, "kinds": kinds[:2]}, borrow_from(location, twin, kinds))
+
+
 def _lite(tool, result):
     """What the planning model sees: enough to choose the next call, without the detail kept for the brief."""
     if tool == "competitors" and isinstance(result, list):
         return [{k: v[k] for k in ("id", "name", "category", "popularity")} for v in result]
+    if tool == "area_taste":
+        return {k: v for k, v in result.items() if k not in ("centre", "in_named_city")}
     return result
 
 
@@ -246,12 +322,17 @@ def research(concept, location, inspirations="", on_step=None):
             messages.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(_lite(name, result), ensure_ascii=False)})
         if len(ledger) >= MAX_CALLS or (len(ledger) >= MIN_CALLS and not missing()):
             break
+    try:
+        _twin_steps(location, ledger, record)
+    except Exception:  # twins are an extra; the brief still stands without them
+        pass
     return ledger
 
 
 _LABELS = {"area_taste": "Taste of the area", "competitors": "Competing venues", "lookup": "Entity lookup",
            "audience_taste": "What that audience also loves", "venues_for_taste": "Where that audience already goes",
-           "city_taste": "City-wide taste"}
+           "city_taste": "City-wide taste", "taste_twins": "Taste twins: areas in other cities whose venues this audience has the highest affinity for",
+           "borrow_from": "Venues in the closest taste twin, ranked by this area's audience's affinity for them"}
 
 
 _AREA_KEYS = {"popular_venues": "most popular venues", "local_venue_artists": "artists favoured by local venues' audiences",
@@ -270,12 +351,14 @@ def _evidence(ledger):
     for s in ledger:
         if isinstance(s["result"], dict) and "error" in s["result"]:
             continue
-        scope = ", ".join(str(v) for k, v in s["args"].items() if k != "entity_ids" and k != "tag_ids")
+        scope = ", ".join(", ".join(v) if isinstance(v, list) else str(v) for k, v in s["args"].items() if k != "entity_ids")
         res = s["result"]
         if s["tool"] == "area_taste":
             res = {_AREA_KEYS[k]: v for k, v in res.items() if k in _AREA_KEYS}
-        elif s["tool"] in ("competitors", "venues_for_taste"):
-            res = [{_VENUE_KEYS.get(k, k): x for k, x in v.items() if k != "id"} for v in res]
+        elif s["tool"] in ("competitors", "venues_for_taste", "borrow_from"):
+            res = [{_VENUE_KEYS.get(k, k): x for k, x in v.items() if k not in ("id", "lat", "lon")} for v in res]
+        elif s["tool"] == "taste_twins":
+            res = [{"area": t["name"], "match out of 100": t["match"]} for t in res["twins"]]
         lines.append(f"[{_LABELS[s['tool']]} - {scope}]\n{json.dumps(res, ensure_ascii=False)}")
     return "\n\n".join(lines)
 
@@ -303,15 +386,24 @@ def run(concept, location, inspirations="", on_step=None):
         b["recommendations"] = [r for r in b.get("recommendations", []) if len(r["signals"]) >= MIN_SIGNALS.get(r.get("area"), 1) and not misfit(r, kinds)]
         return b
 
-    bad = [c for c in cited(brief) if c.lower() not in known]
-    weak = [r["idea"] for r in brief.get("recommendations", []) if misfit(r, kinds)]
+    def problems(b):
+        bad = [c for c in cited(b) if c.lower() not in known]
+        weak = [r["idea"] for r in b.get("recommendations", []) if misfit(r, kinds)]
+        return bad, weak
+
+    writer = brief.pop("_model", None)
+    bad, weak = problems(brief)
     if len(brief.get("recommendations", [])) - len(weak) < MIN_RECS or len(bad) > 3:
         fix = (f"{prompt}\n\nYOUR PREVIOUS BRIEF\n{json.dumps(brief, ensure_ascii=False)}\n\nProblems to fix. Signals not "
                f"found in the evidence: {json.dumps(bad, ensure_ascii=False)}. Ideas whose signals do not support them: "
                f"{json.dumps(weak, ensure_ascii=False)}. Rewrite the brief so every signal is an exact name from the "
                "evidence and is the right kind of evidence for its idea; replace or drop ideas you cannot support.")
         brief = chat_json(BRIEF, fix)
-    return {"brief": clean(brief), "ledger": ledger, "writer": brief.pop("_model", None)}
+        writer = brief.pop("_model", writer)
+    brief = clean(brief)
+    if len(brief["recommendations"]) < MIN_RECS or len(brief.get("competitors", [])) < 2:
+        raise ThinBrief(f"only {len(brief['recommendations'])} supported recommendations")
+    return {"brief": brief, "ledger": ledger, "writer": writer}
 
 
 def generic(concept, location, inspirations=""):
@@ -321,7 +413,7 @@ def generic(concept, location, inspirations=""):
 
 
 FITTING = {"music": {"artist", "genre"}, "partners": {"brand", "venue"}, "pricing": {"venue"},
-           "menu": {"venue", "food"}, "decor": {"venue", "ambience", "brand"}}
+           "menu": {"venue", "food"}, "decor": {"venue", "ambience", "brand"}, "borrow": {"twin_venue"}}
 
 
 def signal_kinds(ledger):
@@ -350,6 +442,10 @@ def signal_kinds(ledger):
                 add(v.get("feel", []), "ambience")
         elif tool in ("audience_taste", "city_taste"):
             add(res, s["args"]["domain"])
+        elif tool == "taste_twins":
+            add(res["twins"], "twin")
+        elif tool == "borrow_from":
+            add(res, "twin_venue")
         elif tool == "lookup":
             for e in res[:1]:  # only the top match counts as found
                 add([e], "venue" if e["type"] == "place" else e["type"])
@@ -379,6 +475,8 @@ def describe(step):
         "audience_taste": f"Asking what fans of {who} also love: {domain}",
         "venues_for_taste": f"Finding where fans of {who} already go in {a.get('location', 'the area')}",
         "city_taste": f"Reading {a.get('city', 'the city')}-wide taste: {domain}",
+        "taste_twins": f"Searching {step['result'].get('compared', '') if isinstance(step['result'], dict) else ''} neighbourhoods worldwide for this area's taste twins",
+        "borrow_from": f"Finding what this crowd would love most in {a.get('twin', 'the twin')}",
     }.get(step["tool"], step["tool"])
 
 
@@ -387,6 +485,8 @@ def preview(step, n=8):
     res = step["result"]
     if isinstance(res, dict) and "error" in res:
         return []
+    if step["tool"] == "taste_twins":
+        return [f"{t['name']} · {t['match']}" for t in res["twins"]]
     if step["tool"] == "area_taste":
         return res["popular_venues"][:3] + res["city_artists"][:2] + res["brands"][:2] + res["music_genres"][:2]
     return list(dict.fromkeys((x.get("name") if isinstance(x, dict) else x) for x in res))[:n]
@@ -396,10 +496,24 @@ def venue_facts(ledger):
     """Rating, price tier, popularity and highlights for every venue seen during research, keyed by lower-case name."""
     facts = {}
     for s in ledger:
-        if s["tool"] in ("competitors", "venues_for_taste") and isinstance(s["result"], list):
+        if s["tool"] in ("competitors", "venues_for_taste", "borrow_from") and isinstance(s["result"], list):
             for v in s["result"]:
-                facts.setdefault(v["name"].lower(), {k: v.get(k) for k in ("category", "popularity", "rating", "price_level", "known_for", "feel", "affinity")})
+                facts.setdefault(v["name"].lower(), {k: v.get(k) for k in ("category", "popularity", "rating", "price_level", "known_for", "feel", "affinity", "lat", "lon")})
+                if s["tool"] == "borrow_from":
+                    facts[v["name"].lower()]["in"] = s["args"]["twin"]
     return facts
+
+
+def check_rivals(brief, location):
+    """How many of a brief's named competitors Qloo lists as a place in that city. Returns (found, total)."""
+    names = [c.get("name", "") for c in brief.get("competitors", []) if c.get("name")]
+    found = 0
+    for n in names:
+        try:
+            found += any(r["type"] == "place" and qloo.same_city(location, r.get("where") or "") for r in lookup(n))
+        except Exception:
+            pass
+    return found, len(names)
 
 
 def prose(brief):

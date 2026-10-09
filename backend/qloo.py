@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import time
+import unicodedata
 from pathlib import Path
 
 import requests
@@ -67,6 +68,8 @@ def _slim(e):
         "price_level": p.get("price_level"),
         "description": p.get("description"),
         "tags": [t["name"] for t in e.get("tags", []) if t.get("name")],
+        "lat": (e.get("location") or {}).get("lat"),
+        "lon": (e.get("location") or {}).get("lon"),
     }
 
 
@@ -86,6 +89,22 @@ def resolve_location(location):
         return None
     found = res.get("query", {}).get("localities", {}).get("filter", [])
     return found[0].get("disambiguation") or found[0].get("name") if found else None
+
+
+CITY_ALIASES = {"bangalore": "bengaluru", "bombay": "mumbai", "brooklyn": "new york", "new york city": "new york", "nyc": "new york"}
+
+
+def _plain(text):
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+
+
+def same_city(asked, resolved):
+    """Whether Qloo's reading of a place is in the city the person named (guards against look-alike names abroad)."""
+    parts = [p.strip() for p in _plain(asked).split(",") if p.strip()]
+    if len(parts) < 2 or not resolved:
+        return True
+    city, got = parts[-1], _plain(resolved)
+    return city in got or CITY_ALIASES.get(city, "\0") in got
 
 
 def places(location, tags=None, take=20, page=1):

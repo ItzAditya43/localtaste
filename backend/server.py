@@ -45,16 +45,25 @@ def _slug(concept, location, inspirations=""):
 
 def _step_event(step):
     res = step["result"]
+    is_dict = isinstance(res, dict)
     return {"title": agent.describe(step), "tool": step["tool"], "names": agent.preview(step),
-            "failed": isinstance(res, dict) and "error" in res,
-            "resolved_as": res.get("resolved_as") if isinstance(res, dict) else None}
+            "failed": is_dict and "error" in res,
+            "resolved_as": res.get("resolved_as") if is_dict else None,
+            "doubtful": is_dict and res.get("in_named_city") is False}
 
 
 def _package(concept, location, inspirations, out, plain):
     ledger = out["ledger"]
+    area = next((s["result"] for s in ledger if s["tool"] == "area_taste"), {})
+    twins = next((s["result"] for s in ledger if s["tool"] == "taste_twins"), None)
+    borrow = next((s for s in ledger if s["tool"] == "borrow_from"), None)
+    found, total = agent.check_rivals(plain, location) if plain else (0, 0)
     return {
+        "centre": area.get("centre"), "twins": twins,
+        "borrow": {"from": borrow["args"]["twin"], "venues": borrow["result"]} if borrow else None,
+        "plain_rivals": {"found": found, "total": total},
         "concept": concept, "location": location, "inspirations": inspirations, "brief": out["brief"], "plain": plain,
-        "same_model": bool(plain) and plain.get("_model") == out.get("writer"),
+        "same_model": bool(plain) and plain.get("_model") == out.get("writer"), "writer": out.get("writer"),
         "steps": [_step_event(s) for s in ledger],
         "kinds": agent.signal_kinds(ledger), "venues": agent.venue_facts(ledger),
         "stats": {"qloo_calls": len(ledger), "signals": len(set(c.lower() for c in agent.cited(out["brief"])))},
@@ -91,6 +100,9 @@ def _live_run(concept, location, inspirations, visitor):
             events.put(("result", result))
         except agent.UnknownPlace as ex:
             events.put(("error", {"message": str(ex)}))
+        except agent.ThinBrief:
+            logging.exception("thin brief")
+            events.put(("error", {"message": "The agent could not back enough ideas with Qloo's data to make a brief worth reading this time. Please try again in a few minutes, or open a saved example."}))
         except llm.Busy:
             logging.exception("model busy")
             events.put(("error", {"message": "The free model tier this demo runs on is at its limit right now. Please try again in a minute; saved examples still work."}))
@@ -127,7 +139,8 @@ def run(request: Request, concept: str = Query(min_length=5, max_length=300), lo
 @app.get("/api/examples")
 def examples():
     runs = [json.loads(p.read_text()) for p in sorted(RUNS.glob("*.json"))] if RUNS.exists() else []
-    return [{"concept": r["concept"], "location": r["location"], "inspirations": r.get("inspirations", "")} for r in runs]
+    return [{"concept": r["concept"], "location": r["location"], "inspirations": r.get("inspirations", "")}
+            for r in runs if ". Change: " not in r["concept"] and r.get("twins")]
 
 
 @app.get("/")

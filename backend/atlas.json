@@ -1,0 +1,176 @@
+[
+ {
+  "name": "Shoreditch, London",
+  "resolved_as": "Shoreditch, Hackney, London Borough of Hackney, London, Inner London - East, Greater London, England, United Kingdom",
+  "lat": 51.5149,
+  "lon": -0.0824
+ },
+ {
+  "name": "Soho, London",
+  "resolved_as": "Soho, Westminster, City of Westminster, London, Inner London - West, Greater London, England, United Kingdom",
+  "lat": 51.5121,
+  "lon": -0.1352
+ },
+ {
+  "name": "Williamsburg, Brooklyn",
+  "resolved_as": "Williamsburg, Brooklyn, New York, New York, United States of America",
+  "lat": 40.717,
+  "lon": -73.9602
+ },
+ {
+  "name": "Lower East Side, New York",
+  "resolved_as": "Lower East Side, Manhattan Community Board 3, Manhattan, New York County, New York, New York, United States",
+  "lat": 40.7214,
+  "lon": -73.9879
+ },
+ {
+  "name": "Le Marais, Paris",
+  "resolved_as": "Le Marais, Quartier des Archives, 3rd Arrondissement, Paris, Paris, Paris, Paris Police Prefecture, Ile-de-France, Metropolitan France, France, France (Landmass)",
+  "lat": 48.8586,
+  "lon": 2.361
+ },
+ {
+  "name": "Kreuzberg, Berlin",
+  "resolved_as": "Friedrichshain-Kreuzberg, Berlin, Germany",
+  "lat": 52.5072,
+  "lon": 13.4029
+ },
+ {
+  "name": "Shibuya, Tokyo",
+  "resolved_as": "Shibuya, Tokyo, Tōkaidō, JGSDF East Army, Japan, JGSDF Army",
+  "lat": 35.6665,
+  "lon": 139.7009
+ },
+ {
+  "name": "Bandra West, Mumbai",
+  "resolved_as": "Bandra West, H/W Ward, Zone 3, Mumbai, Mumbai, Maharashtra, India",
+  "lat": 19.0446,
+  "lon": 72.8356
+ },
+ {
+  "name": "Indiranagar, Bangalore",
+  "resolved_as": "Indiranagar 2nd Stage, Hoysala Nagar, East Zone, Bengaluru, Bangalore Metropolitan Region Development Authority, Bangalore North, Bengaluru Urban, Karnataka, India",
+  "lat": 12.9674,
+  "lon": 77.6416
+ },
+ {
+  "name": "Koramangala, Bangalore",
+  "resolved_as": "Koramangala, South Zone, Bengaluru, Bangalore Metropolitan Region Development Authority, Bangalore South, Bengaluru Urban, Karnataka, India",
+  "lat": 12.9334,
+  "lon": 77.6246
+ },
+ {
+  "name": "Hauz Khas, Delhi",
+  "resolved_as": "Hauz Khas Tehsil, South Delhi, Delhi, India",
+  "lat": 28.5443,
+  "lon": 77.2055
+ },
+ {
+  "name": "Silver Lake, Los Angeles",
+  "resolved_as": "Silver Lake, Los Angeles, Los Angeles County, California, United States",
+  "lat": 34.0842,
+  "lon": -118.2729
+ },
+ {
+  "name": "Hayes Valley, San Francisco",
+  "resolved_as": "Hayes Valley, San Francisco, California, United States",
+  "lat": 37.781,
+  "lon": -122.4139
+ },
+ {
+  "name": "Wicker Park, Chicago",
+  "resolved_as": "Wicker Park, West Town, Chicago, West Chicago Township, Cook County, Illinois, United States",
+  "lat": 41.9103,
+  "lon": -87.6784
+ },
+ {
+  "name": "Capitol Hill, Seattle",
+  "resolved_as": "Capitol Hill, Seattle, King County, Washington, United States",
+  "lat": 47.6174,
+  "lon": -122.3324
+ },
+ {
+  "name": "Fitzroy, Melbourne",
+  "resolved_as": "Fitzroy, Melbourne, City of Yarra, Victoria, Australia",
+  "lat": -37.7982,
+  "lon": 144.9784
+ },
+ {
+  "name": "Newtown, Sydney",
+  "resolved_as": "Newtown, Sydney, Inner West Council, New South Wales, Australia",
+  "lat": -33.8978,
+  "lon": 151.1791
+ },
+ {
+  "name": "Roma Norte, Mexico City",
+  "resolved_as": "Roma Norte, Mexico City, Cuauhtémoc, Mexico City, Mexico",
+  "lat": 19.4189,
+  "lon": -99.1635
+ },
+ {
+  "name": "Palermo, Buenos Aires",
+  "resolved_as": "Palermo, Buenos Aires, Comuna 14, Autonomous City of Buenos Aires, Argentina",
+  "lat": -34.5823,
+  "lon": -58.4199
+ },
+ {
+  "name": "Gracia, Barcelona",
+  "resolved_as": "Gràcia, Barcelona, Barcelonès, Barcelona, East, Spain",
+  "lat": 41.3992,
+  "lon": 2.157
+ },
+ {
+  "name": "Trastevere, Rome",
+  "resolved_as": "Trastevere, Municipio Roma I, Rome, Roma Capitale, Lazio, Central Italy, Italy",
+  "lat": 41.8901,
+  "lon": 12.4707
+ },
+ {
+  "name": "De Pijp, Amsterdam",
+  "resolved_as": "De Pijp, Amsterdam, Noord-Holland, Nederland, Nederland",
+  "lat": 52.3559,
+  "lon": 4.8907
+ },
+ {
+  "name": "Norrebro, Copenhagen",
+  "resolved_as": "Nørrebro, Copenhagen Municipality, Capital Region of Denmark, Denmark",
+  "lat": 55.6825,
+  "lon": 12.5625
+ },
+ {
+  "name": "Hongdae, Seoul",
+  "resolved_as": "Hongdae Street, Seogyo-dong, Seoul, Seogyo-dong, Mapo-gu, Seoul, South Korea",
+  "lat": 37.5566,
+  "lon": 126.922
+ },
+ {
+  "name": "Tiong Bahru, Singapore",
+  "resolved_as": "Tiong Bahru, Bukit Merah, Singapore, Central, Singapore",
+  "lat": 1.2982,
+  "lon": 103.8423
+ },
+ {
+  "name": "Kadikoy, Istanbul",
+  "resolved_as": "Kadıköy, Istanbul, Marmara Region, Turkey",
+  "lat": 40.9789,
+  "lon": 29.0455
+ },
+ {
+  "name": "Chiado, Lisbon",
+  "resolved_as": "Chiado, Santa Maria Maior, Lisbon, Lisbon, Portugal",
+  "lat": 38.7139,
+  "lon": -9.1349
+ },
+ {
+  "name": "Plateau Mont-Royal, Montreal",
+  "resolved_as": "Le Plateau-Mont-Royal, Montreal, Urban agglomeration of Montreal, Quebec, Canada",
+  "lat": 45.5195,
+  "lon": -73.5764
+ },
+ {
+  "name": "East Austin, Austin",
+  "resolved_as": "East Austin, Chestnut, Austin, Travis County, Texas, United States",
+  "lat": 30.2698,
+  "lon": -97.7362
+ }
+]
