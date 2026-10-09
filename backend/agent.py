@@ -315,6 +315,44 @@ def misfit(rec, kinds):
     return bool(want) and not any(kinds.get(c.lower()) in want for c in rec.get("signals", []))
 
 
+def describe(step):
+    """A one-line, human description of a research step, for showing the agent's work."""
+    a = step["args"] if isinstance(step["args"], dict) else {}
+    n = len(a.get("entity_ids", []))
+    domain = {"artist": "music", "brand": "brands", "movie": "films", "tv_show": "TV"}.get(a.get("domain"), "")
+    return {
+        "area_taste": f"Reading the taste of {a.get('location', 'the area')}",
+        "find_tags": f"Looking up how Qloo labels \u201c{a.get('query', '')}\u201d",
+        "competitors": f"Finding comparable venues in {a.get('location', 'the area')}",
+        "lookup": f"Finding \u201c{a.get('name', '')}\u201d in Qloo",
+        "audience_taste": f"Asking what the audience of {n} venue{'s' if n != 1 else ''} also loves: {domain}",
+        "venues_for_taste": f"Finding where that audience already goes in {a.get('location', 'the area')}",
+        "city_taste": f"Reading {a.get('city', 'the city')}-wide taste: {domain}",
+    }.get(step["tool"], step["tool"])
+
+
+def preview(step, n=8):
+    """A few names from a step's result."""
+    res = step["result"]
+    if isinstance(res, dict) and "error" in res:
+        return []
+    if step["tool"] == "find_tags":
+        return []
+    if step["tool"] == "area_taste":
+        return res["popular_venues"][:3] + res["city_artists"][:2] + res["brands"][:2] + res["music_genres"][:2]
+    return list(dict.fromkeys((x.get("name") if isinstance(x, dict) else x) for x in res))[:n]
+
+
+def venue_facts(ledger):
+    """Rating, price tier, popularity and highlights for every venue seen during research, keyed by lower-case name."""
+    facts = {}
+    for s in ledger:
+        if s["tool"] in ("competitors", "venues_for_taste") and isinstance(s["result"], list):
+            for v in s["result"]:
+                facts.setdefault(v["name"].lower(), {k: v.get(k) for k in ("popularity", "rating", "price_level", "known_for", "affinity")})
+    return facts
+
+
 def prose(brief):
     """All free text in a brief, for checks on what it says."""
     parts = [brief.get("positioning", ""), brief.get("area_read", "")]

@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalTaste: know the neighbourhood before you open</title>
+<meta name="description" content="An agent that reads a neighbourhood's taste with Qloo and writes a launch brief for your business.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f6f1e7; --surface: #fffdf8; --ink: #1d1a16; --muted: #6b6257; --line: #e2d9c8;
+  --accent: #c2410c; --accent-ink: #fff; --ok: #166534; --warn: #9a3412;
+  --venue: #fde7d3; --venue-ink: #7c2d12; --artist: #e3defc; --artist-ink: #3b2a8c;
+  --brand: #d6f0e0; --brand-ink: #14532d; --screen: #fbe3ea; --screen-ink: #831843;
+  --genre: #dcebfb; --genre-ink: #1e3a8a; --detail: #efe9dc; --detail-ink: #4a4237;
+  --shadow: 0 1px 2px rgba(60, 40, 10, .06), 0 8px 24px rgba(60, 40, 10, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15120f; --surface: #1e1a16; --ink: #f3ece0; --muted: #a79c8c; --line: #332c24;
+    --accent: #fb923c; --accent-ink: #1d1a16; --ok: #86efac; --warn: #fdba74;
+    --venue: #43271a; --venue-ink: #fed7aa; --artist: #2c2752; --artist-ink: #c7d2fe;
+    --brand: #173524; --brand-ink: #bbf7d0; --screen: #401a2a; --screen-ink: #fbcfe8;
+    --genre: #1a2c48; --genre-ink: #bfdbfe; --detail: #2a251f; --detail-ink: #d6ccbc;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .25);
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+header.top { display: flex; justify-content: space-between; align-items: center; padding: 22px 0; }
+.mark { font: 700 22px/1 Fraunces, Georgia, serif; letter-spacing: -.01em; }
+.mark span { color: var(--accent); }
+.powered { font-size: 13px; color: var(--muted); }
+h1 { font: 700 clamp(34px, 6vw, 60px)/1.04 Fraunces, Georgia, serif; letter-spacing: -.02em; margin: 28px 0 14px; max-width: 16ch; }
+.lede { font-size: 18px; color: var(--muted); max-width: 58ch; margin: 0 0 28px; }
+h2 { font: 600 26px/1.2 Fraunces, Georgia, serif; margin: 0 0 6px; letter-spacing: -.01em; }
+h3 { font: 600 12px/1 Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+form.ask { padding: 20px; display: grid; grid-template-columns: 1.6fr 1fr auto; gap: 14px; align-items: end; }
+label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+input, textarea { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; resize: none; }
+input:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { font: 600 15px Inter, sans-serif; cursor: pointer; border: 0; border-radius: 10px; }
+.go { background: var(--accent); color: var(--accent-ink); padding: 13px 22px; white-space: nowrap; }
+.go[disabled] { opacity: .55; cursor: progress; }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0 0; font-size: 14px; color: var(--muted); }
+.examples button { background: transparent; border: 1px solid var(--line); color: var(--ink); padding: 7px 12px; border-radius: 999px; font-weight: 500; font-size: 13px; }
+.examples button:hover { border-color: var(--accent); }
+section { margin: 44px 0; }
+.sub { color: var(--muted); margin: 0 0 18px; }
+ol.steps { list-style: none; margin: 0; padding: 6px 20px; }
+ol.steps li { display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); animation: rise .35s ease both; }
+ol.steps li:last-child { border-bottom: 0; }
+.num { width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: var(--bg); font: 600 12px/26px Inter; text-align: center; }
+.step-title { font-weight: 600; }
+.status { padding: 14px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; gap: 10px; align-items: center; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { font-size: 12.5px; font-weight: 500; padding: 3px 9px; border-radius: 999px; background: var(--detail); color: var(--detail-ink); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.chip.venue { background: var(--venue); color: var(--venue-ink); }
+.chip.artist { background: var(--artist); color: var(--artist-ink); }
+.chip.brand { background: var(--brand); color: var(--brand-ink); }
+.chip.movie, .chip.tv_show { background: var(--screen); color: var(--screen-ink); }
+.chip.genre { background: var(--genre); color: var(--genre-ink); }
+.chip.unverified { background: transparent; color: var(--muted); border: 1px dashed var(--muted); }
+.statbar { display: flex; flex-wrap: wrap; gap: 10px 26px; padding: 16px 20px; margin-bottom: 16px; font-size: 14px; color: var(--muted); }
+.statbar b { font: 700 22px/1 Fraunces, serif; color: var(--ink); margin-right: 6px; }
+.tabs { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px; margin-bottom: 18px; }
+.tabs button { background: transparent; color: var(--muted); padding: 8px 14px; font-size: 14px; }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.cols { display: grid; gap: 20px; }
+.cols.two { grid-template-columns: 1fr 1fr; }
+.brief { padding: 26px; }
+.brief.plain { border-style: dashed; box-shadow: none; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; margin-bottom: 14px; background: var(--brand); color: var(--brand-ink); }
+.brief.plain .tag { background: var(--detail); color: var(--detail-ink); }
+.position { font: 400 22px/1.4 Fraunces, Georgia, serif; margin: 0 0 14px; }
+.area { color: var(--muted); margin: 0 0 26px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-bottom: 28px; }
+.mini { border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.mini strong { display: block; margin-bottom: 2px; }
+.meta { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.mini p { margin: 0; font-size: 14px; }
+.rec { border-top: 1px solid var(--line); padding: 16px 0; display: grid; grid-template-columns: 92px 1fr; gap: 14px; }
+.rec .where { font: 600 12px/1.6 Inter; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.rec p { margin: 0 0 4px; }
+.rec .why { color: var(--muted); font-size: 14px; }
+.risk { border-left: 3px solid var(--warn); padding: 4px 0 4px 14px; margin: 0 0 14px; }
+.risk p { margin: 0; }
+.note { font-size: 13px; color: var(--muted); margin-top: 18px; }
+.error { padding: 16px 20px; color: var(--warn); }
+footer { border-top: 1px solid var(--line); padding: 26px 0 50px; font-size: 13px; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+[hidden] { display: none !important; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes pulse { 50% { opacity: .25; } }
+@media (max-width: 820px) {
+  form.ask, .cols.two { grid-template-columns: 1fr; }
+  .rec { grid-template-columns: 1fr; gap: 4px; }
+  .brief { padding: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="mark">Local<span>Taste</span></div>
+    <div class="powered">Grounded in Qloo's Taste AI</div>
+  </header>
+
+  <main>
+    <h1>Know the neighbourhood before you sign the lease.</h1>
+    <p class="lede">Describe what you want to open and where. An agent reads the area's taste in music, brands, film and food, studies who you'd compete with, and writes a launch brief where every idea points to the data behind it.</p>
+
+    <form class="ask card" id="ask">
+      <div>
+        <label for="concept">What are you opening?</label>
+        <textarea id="concept" rows="2" maxlength="300" required placeholder="A specialty coffee shop and vinyl listening room"></textarea>
+      </div>
+      <div>
+        <label for="location">Where?</label>
+        <input id="location" maxlength="80" required placeholder="Neighbourhood, City">
+      </div>
+      <button class="go" id="go">Write my brief</button>
+    </form>
+    <div class="examples" id="examples" hidden><span>Saved examples:</span></div>
+
+    <section id="work" hidden>
+      <h2>The agent's research</h2>
+      <p class="sub" id="work-sub">Each line is a question the agent chose to ask Qloo.</p>
+      <div class="card">
+        <ol class="steps" id="steps"></ol>
+        <div class="status" id="status"><span class="dot"></span><span id="status-text">Starting…</span></div>
+      </div>
+    </section>
+
+    <section id="result" hidden>
+      <h2 id="result-title">Your brief</h2>
+      <p class="sub" id="result-sub"></p>
+      <div class="card statbar" id="stats"></div>
+      <div class="tabs" role="tablist">
+        <button role="tab" data-view="qloo" aria-selected="true">With Qloo</button>
+        <button role="tab" data-view="both" aria-selected="false">Side by side</button>
+        <button role="tab" data-view="plain" aria-selected="false">Same model, no Qloo</button>
+      </div>
+      <div class="cols" id="briefs"></div>
+      <div class="legend" id="legend"></div>
+    </section>
+  </main>
+
+  <footer>
+    LocalTaste derives a neighbourhood's taste from the audiences of its venues, using Qloo's hackathon API. It describes who an area is and what they favour. It does not predict whether a business will succeed.
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const KIND_LABEL = { venue: "Venue", artist: "Artist", brand: "Brand", movie: "Film", tv_show: "TV", genre: "Music genre", food: "Food scene", ambience: "Ambience", detail: "Known for" };
+let current = null, source = null;
+
+function chip(name, kinds, strict) {
+  const kind = kinds[String(name).toLowerCase()];
+  if (!kind && strict) return `<span class="chip unverified" title="Not found in Qloo's data for this run">${esc(name)}</span>`;
+  return `<span class="chip ${kind || ""}" title="${esc(KIND_LABEL[kind] || "")}">${esc(name)}</span>`;
+}
+
+function venueMeta(v) {
+  if (!v) return "";
+  const bits = [];
+  if (v.rating) bits.push(`★ ${Number(v.rating).toFixed(1)}`);
+  if (v.price_level) bits.push("$".repeat(v.price_level));
+  if (v.popularity) bits.push(`popularity ${Math.round(v.popularity * 100)}`);
+  return bits.join(" · ");
+}
+
+function renderBrief(b, data, grounded) {
+  const kinds = data.kinds, order = ["menu", "music", "decor", "partners", "pricing", "events"];
+  const recs = [...(b.recommendations || [])].sort((x, y) => (order.indexOf(x.area) + 99) % 99 - (order.indexOf(y.area) + 99) % 99);
+  const comps = (b.competitors || []).map((c) => {
+    const v = data.venues[String(c.name).toLowerCase()];
+    const meta = grounded ? venueMeta(v) : (v ? venueMeta(v) : "not found in Qloo's data for this run");
+    return `<div class="mini"><strong>${esc(c.name)}</strong><div class="meta">${esc(meta)}</div><p>${esc(c.takeaway)}</p></div>`;
+  }).join("");
+  const recHtml = recs.map((r) => `
+    <div class="rec"><div class="where">${esc(r.area)}</div><div>
+      <p>${esc(r.idea)}</p><p class="why">${esc(r.why)}</p>
+      <div class="chips">${(r.signals || []).map((s) => chip(s, kinds, true)).join("")}</div>
+    </div></div>`).join("");
+  const risks = (b.risks || []).map((r) => `<div class="risk"><p>${esc(r.risk)}</p><div class="chips">${(r.signals || []).map((s) => chip(s, kinds, true)).join("")}</div></div>`).join("");
+  return `<article class="card brief ${grounded ? "" : "plain"}">
+    <span class="tag">${grounded ? "Grounded in Qloo" : "Same model, no Qloo"}</span>
+    <p class="position">${esc(b.positioning)}</p>
+    <p class="area">${esc(b.area_read)}</p>
+    <h3>Who you're up against</h3><div class="grid">${comps}</div>
+    <h3>What to do</h3>${recHtml}
+    <h3 style="margin-top:26px">What could go wrong</h3>${risks}
+    ${grounded ? "" : `<p class="note">Dashed names came from the model's memory and do not appear in Qloo's data for this run. They may be real, out of date or invented.</p>`}
+  </article>`;
+}
+
+function show(view) {
+  if (!current) return;
+  view = ["qloo", "both", "plain"].includes(view) ? view : "qloo";
+  document.querySelectorAll(".tabs button").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
+  const hasPlain = current.plain && current.plain.positioning;
+  const parts = [];
+  if (view !== "plain") parts.push(renderBrief(current.brief, current, true));
+  if (view !== "qloo") parts.push(hasPlain ? renderBrief(current.plain, current, false) : `<div class="card error">The comparison brief is not available for this run.</div>`);
+  $("briefs").className = "cols" + (view === "both" ? " two" : "");
+  $("briefs").innerHTML = parts.join("");
+}
+
+function finish(data) {
+  current = data;
+  const plainNames = [...(data.plain.recommendations || []), ...(data.plain.risks || [])].flatMap((r) => r.signals || []);
+  const matched = plainNames.filter((n) => data.kinds[String(n).toLowerCase()]).length;
+  $("status").hidden = true;
+  $("result-title").textContent = `${data.concept}`;
+  $("result-sub").textContent = data.location;
+  $("stats").innerHTML = `
+    <span><b>${data.stats.qloo_calls}</b>questions asked of Qloo</span>
+    <span><b>${data.stats.signals}</b>taste signals cited, all traced to Qloo</span>
+    <span><b>${matched}/${plainNames.length}</b>names cited without Qloo that match anything Qloo returned</span>`;
+  $("legend").innerHTML = Object.entries(KIND_LABEL).map(([k, l]) => `<span class="chip ${k}">${l}</span>`).join("");
+  $("result").hidden = false;
+  show(new URLSearchParams(window.location.search).get("view") || "qloo");
+  $("result").scrollIntoView({ block: "start" });
+}
+
+function start(concept, location) {
+  if (source) source.close();
+  current = null;
+  $("go").disabled = true;
+  $("steps").innerHTML = "";
+  $("result").hidden = true;
+  $("work").hidden = false;
+  $("status").hidden = false;
+  $("status").innerHTML = `<span class="dot"></span><span id="status-text">Planning the research…</span>`;
+  $("work").scrollIntoView({ block: "start" });
+  const view = new URLSearchParams(window.location.search).get("view");
+  history.replaceState(null, "", `?concept=${encodeURIComponent(concept)}&location=${encodeURIComponent(location)}${view ? `&view=${view}` : ""}`);
+  const done = () => { $("go").disabled = false; source.close(); };
+  source = new EventSource(`/api/run?concept=${encodeURIComponent(concept)}&location=${encodeURIComponent(location)}`);
+  source.addEventListener("start", (e) => {
+    $("work-sub").textContent = JSON.parse(e.data).saved
+      ? "Replaying a saved run. Each line is a question the agent chose to ask Qloo."
+      : "Live run. Each line is a question the agent chose to ask Qloo.";
+  });
+  source.addEventListener("step", (e) => {
+    const s = JSON.parse(e.data), li = document.createElement("li");
+    li.innerHTML = `<span class="num">${$("steps").children.length + 1}</span><div>
+      <div class="step-title">${esc(s.title)}</div>
+      <div class="chips">${s.failed || (!s.names.length && s.tool !== "find_tags") ? `<span class="chip unverified">nothing found, trying another way</span>` : s.names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div></div>`;
+    $("steps").appendChild(li);
+    $("status-text").textContent = "Researching…";
+  });
+  source.addEventListener("writing", () => { $("status-text").textContent = "Writing the brief from what Qloo returned…"; });
+  source.addEventListener("result", (e) => { finish(JSON.parse(e.data)); done(); });
+  source.addEventListener("error", (e) => {
+    const msg = e.data ? JSON.parse(e.data).message : "The connection dropped before the brief was finished. Please try again.";
+    $("status").innerHTML = `<span class="error" style="padding:0">${esc(msg)}</span>`;
+    done();
+  });
+}
+
+$("ask").addEventListener("submit", (e) => {
+  e.preventDefault();
+  start($("concept").value.trim(), $("location").value.trim());
+});
+document.querySelectorAll(".tabs button").forEach((t) => t.addEventListener("click", () => show(t.dataset.view)));
+
+const shared = new URLSearchParams(location.search);
+if (shared.get("concept") && shared.get("location")) {
+  $("concept").value = shared.get("concept");
+  $("location").value = shared.get("location");
+  start(shared.get("concept"), shared.get("location"));
+}
+
+fetch("/api/examples").then((r) => r.json()).then((list) => {
+  if (!list.length) return;
+  const box = $("examples");
+  list.forEach((x) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = `${x.concept.replace(/^An? /, "")} · ${x.location}`;
+    b.addEventListener("click", () => { $("concept").value = x.concept; $("location").value = x.location; start(x.concept, x.location); });
+    box.appendChild(b);
+  });
+  box.hidden = false;
+}).catch(() => {});
+</script>
+</body>
+</html>
